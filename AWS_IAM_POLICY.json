@@ -1,0 +1,136 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3BackendState",
+      "Effect": "Allow",
+      "Action": [
+        "s3:*"
+      ],
+      "Resource": [
+        "arn:aws:s3:::tx01-terraform-state-maringelix-2025",
+        "arn:aws:s3:::tx01-terraform-state-maringelix-2025/*"
+      ]
+    },
+    {
+      "Sid": "DynamoDBStateLock",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:*"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:*:table/tx01-terraform-state-maringelix-2025-locks"
+    },
+    {
+      "Sid": "EC2Management",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "VPCManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SecurityGroupManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ALBManagement",
+      "Effect": "Allow",
+      "Action": [
+        "elasticloadbalancing:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "WAFManagement",
+      "Effect": "Allow",
+      "Action": [
+        "wafv2:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "ECRManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ecr:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:GetRole",
+        "iam:PutRolePolicy",
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:PassRole",
+        "iam:GetRolePolicy"
+      ],
+      "Resource": [
+        "arn:aws:iam::*:role/tx01*",
+        "arn:aws:iam::*:instance-profile/tx01*"
+      ]
+    },
+    {
+      "Sid": "SelfServicePolicyManagement",
+      "Effect": "Allow",
+      "Action": [
+        "iam:PutUserPolicy",
+        "iam:GetUserPolicy",
+        "iam:DeleteUserPolicy",
+        "iam:ListUserPolicies"
+      ],
+      "Resource": "arn:aws:iam::*:user/devops-tx01"
+    },
+    {
+      "Sid": "CloudWatchManagement",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DeleteLogGroup",
+        "cloudwatch:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "Tagging",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags",
+        "ec2:DescribeTags"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "KeyPairManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:ImportKeyPair",
+        "ec2:DeleteKeyPair",
+        "ec2:DescribeKeyPairs"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
