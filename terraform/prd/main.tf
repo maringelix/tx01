@@ -29,4 +29,5 @@ module "infrastructure" {
   instance_type         = "t3.small"
   ami_id                = "ami-0c02fb55b34e3cf00" # Amazon Linux 2023
   waf_ip_whitelist      = []
+  instance_count        = 3
 }
