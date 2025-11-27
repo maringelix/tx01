@@ -22,3 +22,19 @@ dist/
 build/
 node_modules/
 .git/
+
+# Terraform
+*.tfplan
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.DS_Store
