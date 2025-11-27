@@ -1,0 +1,72 @@
+{
+  "version": "1.0",
+  "project": "tx01",
+  "description": "Infraestrutura AWS profissional com Terraform e CI/CD",
+  "environments": {
+    "stg": {
+      "aws_region": "us-east-1",
+      "instance_type": "t2.micro",
+      "instance_count": 2,
+      "vpc_cidr": "10.0.0.0/16",
+      "tags": {
+        "Environment": "staging",
+        "CostCenter": "DevOps"
+      }
+    },
+    "prd": {
+      "aws_region": "us-east-1",
+      "instance_type": "t2.micro",
+      "instance_count": 2,
+      "vpc_cidr": "10.1.0.0/16",
+      "tags": {
+        "Environment": "production",
+        "CostCenter": "DevOps"
+      }
+    }
+  },
+  "services": {
+    "docker": {
+      "base_image": "nginx:alpine",
+      "ports": [80],
+      "health_check": "/health"
+    },
+    "alb": {
+      "protocol": "HTTP",
+      "target_type": "instance",
+      "health_check_interval": 30,
+      "health_check_path": "/health"
+    },
+    "waf": {
+      "rate_limit_stg": 1000,
+      "rate_limit_prd": 2000,
+      "enabled_rules": [
+        "RateLimitRule",
+        "AWSManagedRulesCommonRuleSet",
+        "AWSManagedRulesSQLiRuleSet",
+        "AWSManagedRulesKnownBadInputsRuleSet"
+      ]
+    },
+    "ecr": {
+      "repository_name": "tx01-nginx",
+      "image_tag_mutability": "IMMUTABLE",
+      "scan_on_push": true,
+      "lifecycle_policy": {
+        "max_images": 10,
+        "untagged_image_age_days": 7
+      }
+    }
+  },
+  "ci_cd": {
+    "github_actions": {
+      "workflows": [
+        "docker-build.yml",
+        "terraform-validate.yml",
+        "deploy.yml"
+      ],
+      "required_secrets": [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY"
+      ]
+    }
+  }
+}
