@@ -1,0 +1,73 @@
+name: 🚀 Terraform Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (stg/prd)'
+        required: true
+        default: 'stg'
+        type: choice
+        options:
+          - stg
+          - prd
+      action:
+        description: 'Action (plan/apply)'
+        required: true
+        default: 'plan'
+        type: choice
+        options:
+          - plan
+          - apply
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.6.0
+
+jobs:
+  terraform:
+    name: TF ${{ inputs.action }} - ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔑 AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📦 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: 🔐 Terraform Init
+        run: terraform init
+        working-directory: terraform/${{ inputs.environment }}
+
+      - name: 📋 Terraform Validate
+        run: terraform validate
+        working-directory: terraform/${{ inputs.environment }}
+
+      - name: 📊 Terraform Plan
+        run: terraform plan -out=tfplan -no-color
+        working-directory: terraform/${{ inputs.environment }}
+
+      - name: 📝 Show Plan
+        run: terraform show tfplan
+        working-directory: terraform/${{ inputs.environment }}
+
+      - name: ✅ Terraform Apply
+        if: inputs.action == 'apply'
+        run: terraform apply -auto-approve tfplan
+        working-directory: terraform/${{ inputs.environment }}
+
+      - name: 📤 Show Outputs
+        if: inputs.action == 'apply'
+        run: terraform output
+        working-directory: terraform/${{ inputs.environment }}
