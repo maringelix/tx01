@@ -185,6 +185,55 @@ aws ec2 describe-instances --query 'Reservations[0].Instances[0].InstanceId'
    - Configure S3 backend para Terraform state
    - Configure snapshot automático de EBS
 
+## 🧰 Bootstrap: Criar S3 bucket e DynamoDB para Terraform state
+
+Recomendo criar um "bootstrap" para o backend remoto (S3 + DynamoDB lock) antes de aplicar os módulos de `stg` e `prd`.
+
+1. Edite `terraform/bootstrap/variables.tf` e defina um nome único para o bucket (`bucket_name`). O nome do bucket deve ser globalmente único na AWS.
+
+2. Inicialize e aplique o bootstrap (vai criar o bucket S3 e a tabela DynamoDB):
+
+```bash
+cd terraform/bootstrap
+terraform init
+terraform apply -auto-approve
+```
+
+3. Ao final, pegue os outputs:
+
+```bash
+terraform output s3_bucket_name
+terraform output dynamodb_table_name
+```
+
+4. Configure o backend remoto nas pastas de ambiente (`terraform/stg` e `terraform/prd`). Exemplo de `backend` que você pode adicionar no topo de `terraform/stg/main.tf` (ou em um arquivo `backend.tf`):
+
+```hcl
+terraform {
+   backend "s3" {
+      bucket         = "<SEU_BUCKET_AQUI>"
+      key            = "tx01/stg/terraform.tfstate"
+      region         = "us-east-1"
+      encrypt        = true
+      dynamodb_table = "<SUA_TABELA_LOCKS_AQUI>"
+   }
+}
+```
+
+5. Em seguida, inicialize o backend no diretório do ambiente (isto migrará o state local para o S3):
+
+```bash
+cd ../stg
+terraform init
+terraform plan
+terraform apply
+```
+
+Observações:
+- Se preferir não editar o código, você pode passar as configurações de backend via linha de comando `terraform init -backend-config="bucket=..." -backend-config="key=..." -backend-config="region=..." -backend-config="dynamodb_table=..."`.
+- Defina `force_destroy` com cuidado no bootstrap — atualmente o `terraform/bootstrap` usa `force_destroy = true` por padrão para facilitar testes; altere para `false` em produção.
+
+
 ## 💡 Dicas
 
 - Use `terraform plan` antes de `apply`
