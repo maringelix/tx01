@@ -1,0 +1,39 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "TerraformBackend",
+      "Effect": "Allow",
+      "Action": ["s3:*", "dynamodb:*"],
+      "Resource": [
+        "arn:aws:s3:::tx01-terraform-state-maringelix-2025",
+        "arn:aws:s3:::tx01-terraform-state-maringelix-2025/*",
+        "arn:aws:dynamodb:us-east-1:*:table/tx01-terraform-state-maringelix-2025-locks"
+      ]
+    },
+    {
+      "Sid": "InfrastructureManagement",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:*",
+        "elasticloadbalancing:*",
+        "wafv2:*",
+        "ecr:*",
+        "logs:*",
+        "cloudwatch:*"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMManagement",
+      "Effect": "Allow",
+      "Action": ["iam:*"],
+      "Resource": [
+        "arn:aws:iam::*:role/tx01*",
+        "arn:aws:iam::*:role/aws-service-role/*",
+        "arn:aws:iam::*:instance-profile/tx01*",
+        "arn:aws:iam::*:user/devops-tx01"
+      ]
+    }
+  ]
+}

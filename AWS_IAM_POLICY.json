@@ -82,11 +82,15 @@
         "iam:AddRoleToInstanceProfile",
         "iam:RemoveRoleFromInstanceProfile",
         "iam:PassRole",
-        "iam:GetRolePolicy"
+        "iam:GetRolePolicy",
+        "iam:TagRole",
+        "iam:UntagRole",
+        "iam:CreateServiceLinkedRole"
       ],
       "Resource": [
         "arn:aws:iam::*:role/tx01*",
-        "arn:aws:iam::*:instance-profile/tx01*"
+        "arn:aws:iam::*:instance-profile/tx01*",
+        "arn:aws:iam::*:role/aws-service-role/elasticloadbalancing.amazonaws.com/AWSServiceRoleForElasticLoadBalancing"
       ]
     },
     {
@@ -109,6 +113,9 @@
         "logs:PutLogEvents",
         "logs:DescribeLogGroups",
         "logs:DeleteLogGroup",
+        "logs:TagResource",
+        "logs:UntagResource",
+        "logs:ListTagsForResource",
         "cloudwatch:*"
       ],
       "Resource": "*"
