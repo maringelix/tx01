@@ -50,3 +50,15 @@ variable "waf_ip_whitelist" {
   type        = list(string)
   default     = []
 }
+
+variable "docker_image_tag" {
+  description = "Docker image tag"
+  type        = string
+  default     = "latest"
+}
+
+variable "aws_region" {
+  description = "AWS Region"
+  type        = string
+  default     = "us-east-1"
+}

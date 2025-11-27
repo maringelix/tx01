@@ -4,7 +4,7 @@ resource "aws_wafv2_ip_set" "whitelist" {
   description        = "IP whitelist for ${var.environment}"
   scope              = "REGIONAL"
   ip_address_version = "IPV4"
-  address_set        = []
+  addresses          = var.waf_ip_whitelist
 
   tags = {
     Name = "${var.project_name}-waf-whitelist-${var.environment}"
@@ -57,7 +57,10 @@ resource "aws_wafv2_web_acl" "main" {
         name        = "AWSManagedRulesCommonRuleSet"
         vendor_name = "AWS"
 
-        excluded_rule {
+        rule_action_override {
+          action_to_use {
+            count {}
+          }
           name = "SizeRestrictions_BODY"
         }
       }
