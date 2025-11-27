@@ -1,0 +1,96 @@
+name: 🚀 Deploy App to EC2
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment (stg/prd)'
+        required: true
+        default: 'stg'
+        type: choice
+        options:
+          - stg
+          - prd
+      image_tag:
+        description: 'Docker image tag (commit SHA)'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🔑 Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔍 Get EC2 instances
+        id: instances
+        run: |
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=tx01-ec2-*-${{ inputs.environment }}" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].InstanceId' \
+            --output text)
+          echo "instances=$INSTANCES" >> $GITHUB_OUTPUT
+          echo "Found instances: $INSTANCES"
+
+      - name: 🐳 Deploy container to EC2
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          INSTANCES: ${{ steps.instances.outputs.instances }}
+        run: |
+          ECR_REGISTRY="894222083614.dkr.ecr.us-east-1.amazonaws.com"
+          REPO_NAME="tx01-nginx"
+          
+          for INSTANCE_ID in $INSTANCES; do
+            echo "🚀 Deploying to instance $INSTANCE_ID..."
+            
+            aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --parameters commands="[
+                'aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $ECR_REGISTRY',
+                'docker pull $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG',
+                'docker stop tx01-nginx || true',
+                'docker rm tx01-nginx || true',
+                'docker run -d --name tx01-nginx --restart unless-stopped -p 80:80 $ECR_REGISTRY/$REPO_NAME:$IMAGE_TAG',
+                'sleep 5',
+                'curl -f http://localhost:80/health && echo \"✅ Deploy successful\" || echo \"⚠️ Health check failed\"'
+              ]" \
+              --comment "Deploy $IMAGE_TAG to ${{ inputs.environment }}"
+            
+            echo "✅ Command sent to $INSTANCE_ID"
+          done
+
+      - name: 📊 Verify deployment
+        run: |
+          echo "Waiting 30s for deployment to complete..."
+          sleep 30
+          
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "tx01-alb-${{ inputs.environment }}" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text)
+          
+          echo "Testing ALB: http://$ALB_DNS"
+          
+          for i in {1..5}; do
+            if curl -f "http://$ALB_DNS/health" > /dev/null 2>&1; then
+              echo "✅ ALB health check passed!"
+              exit 0
+            fi
+            echo "Retry $i/5..."
+            sleep 10
+          done
+          
+          echo "⚠️ ALB health check failed after 5 retries"
+          exit 1

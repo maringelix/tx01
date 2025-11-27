@@ -17,8 +17,8 @@ data "aws_ami" "ubuntu" {
 # User data script para instalar Docker e puxar imagem
 locals {
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
-    ecr_registry  = aws_ecr_repository.main.repository_url
-    docker_image  = var.docker_image_tag
+    ecr_registry  = split("/", aws_ecr_repository.main.repository_url)[0]
+    docker_image  = "${var.project_name}-nginx:${var.docker_image_tag}"
     environment   = var.environment
     aws_region    = var.aws_region
   }))

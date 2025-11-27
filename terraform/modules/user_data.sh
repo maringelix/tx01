@@ -2,49 +2,52 @@
 set -e
 
 # Update system
-sudo apt-get update
-sudo apt-get upgrade -y
+apt-get update
+apt-get upgrade -y
 
 # Install Docker
-sudo apt-get install -y \
+apt-get install -y \
     apt-transport-https \
     ca-certificates \
     curl \
     gnupg \
     lsb-release
 
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
 echo \
   "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu \
-  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+  $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-
-# Add ubuntu user to docker group
-sudo usermod -aG docker ubuntu
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io
 
 # Start Docker
-sudo systemctl start docker
-sudo systemctl enable docker
+systemctl start docker
+systemctl enable docker
 
-# Install AWS CLI
-sudo apt-get install -y awscli
+# Install AWS CLI v2
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+apt-get install -y unzip
+unzip awscliv2.zip
+./aws/install
+rm -rf aws awscliv2.zip
 
 # Login to ECR and pull image
 aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${ecr_registry}
-docker pull ${ecr_registry}:${docker_image}
 
-# Run Docker container
+# Pull and run container
+docker pull ${ecr_registry}/${docker_image}
 docker run -d \
-  --name nginx \
+  --name tx01-nginx \
   --restart unless-stopped \
   -p 80:80 \
-  ${ecr_registry}:${docker_image}
+  ${ecr_registry}/${docker_image}
 
-# CloudWatch agent para monitoramento
-sudo apt-get install -y amazon-cloudwatch-agent
-
-# Log startup
-echo "Container iniciado com sucesso" | tee /var/log/container-startup.log
+# Health check
+sleep 10
+if curl -f http://localhost:80/health > /dev/null 2>&1; then
+  echo "✅ Container healthy" | tee /var/log/container-startup.log
+else
+  echo "⚠️ Container not responding" | tee /var/log/container-startup.log
+fi
