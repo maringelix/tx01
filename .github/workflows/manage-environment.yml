@@ -1,0 +1,119 @@
+name: ⚡ Manage Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - start
+          - stop
+          - status
+      environment:
+        description: 'Environment'
+        required: true
+        default: 'stg'
+        type: choice
+        options:
+          - stg
+          - prd
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  manage-ec2:
+    name: ${{ inputs.action }} EC2 Instances
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🔍 Get EC2 Instance IDs
+        id: get-instances
+        run: |
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=tx01-ec2-*-${{ inputs.environment }}" \
+                      "Name=instance-state-name,Values=running,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' \
+            --output text)
+          
+          if [ -z "$INSTANCE_IDS" ]; then
+            echo "⚠️ No EC2 instances found for environment: ${{ inputs.environment }}"
+            exit 0
+          fi
+          
+          echo "instances=$INSTANCE_IDS" >> $GITHUB_OUTPUT
+          echo "✅ Found instances: $INSTANCE_IDS"
+
+      - name: ▶️ Start EC2 Instances
+        if: inputs.action == 'start' && steps.get-instances.outputs.instances != ''
+        run: |
+          aws ec2 start-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "⏳ Waiting for instances to start..."
+          aws ec2 wait instance-running --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "✅ All instances are now running!"
+
+      - name: ⏸️ Stop EC2 Instances
+        if: inputs.action == 'stop' && steps.get-instances.outputs.instances != ''
+        run: |
+          aws ec2 stop-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "⏳ Waiting for instances to stop..."
+          aws ec2 wait instance-stopped --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "✅ All instances are now stopped!"
+
+      - name: 📊 Check Status
+        if: steps.get-instances.outputs.instances != ''
+        run: |
+          echo "## 📊 Environment Status: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          aws ec2 describe-instances \
+            --instance-ids ${{ steps.get-instances.outputs.instances }} \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,InstanceType,State.Name,PublicIpAddress]' \
+            --output table >> $GITHUB_STEP_SUMMARY
+
+      - name: 💰 Cost Estimate
+        if: inputs.action == 'status' || inputs.action == 'start' || inputs.action == 'stop'
+        run: |
+          INSTANCE_COUNT=$(echo "${{ steps.get-instances.outputs.instances }}" | wc -w)
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 💰 Monthly Cost Estimate" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Resource | Running | Stopped |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **$INSTANCE_COUNT× t2.micro** | ~\$17/mês | \$0 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **ALB** | ~\$20/mês | ~\$20/mês ⚠️ |" >> $GITHUB_STEP_SUMMARY
+          echo "| **EBS (16GB)** | \$1.28/mês | \$1.28/mês |" >> $GITHUB_STEP_SUMMARY
+          echo "| **ECR + S3** | \$0.10/mês | \$0.10/mês |" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **~\$38/mês** | **~\$21/mês** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note:** ALB continues charging even with stopped EC2 instances." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ inputs.action }}" == "stop" ]; then
+            echo "✅ **Savings:** ~\$17/mês with EC2 stopped" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: 🔗 Get ALB URL
+        if: inputs.action == 'start'
+        run: |
+          ALB_DNS=$(aws elbv2 describe-load-balancers \
+            --names "tx01-alb-${{ inputs.environment }}" \
+            --query 'LoadBalancers[0].DNSName' \
+            --output text 2>/dev/null || echo "Not found")
+          
+          if [ "$ALB_DNS" != "Not found" ] && [ "$ALB_DNS" != "None" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "## 🔗 Application URL" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**ALB:** http://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+          fi
