@@ -93,6 +93,7 @@ resource "aws_instance" "web" {
   iam_instance_profile     = aws_iam_instance_profile.ec2_profile.name
   user_data                = local.user_data
   associate_public_ip_address = true
+  key_name                 = "tx01-deploy-key"
 
   monitoring = true
 
