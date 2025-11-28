@@ -38,3 +38,8 @@ override.tf.json
 .terraformrc
 terraform.rc
 .DS_Store
+
+# SSH Keys (never commit)
+*.pem
+*.pub
+add-ssh-key.sh
