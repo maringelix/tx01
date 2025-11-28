@@ -1,0 +1,83 @@
+name: 🏗️ Terraform Bootstrap (S3 + DynamoDB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to perform'
+        required: true
+        default: 'apply'
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.6.0
+
+jobs:
+  bootstrap:
+    name: Bootstrap Backend - ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🔑 AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 📦 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: 🔐 Terraform Init
+        run: terraform init
+        working-directory: terraform/bootstrap
+
+      - name: 📋 Terraform Validate
+        run: terraform validate
+        working-directory: terraform/bootstrap
+
+      - name: 📊 Terraform Plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
+        run: terraform plan -out=tfplan -no-color
+        working-directory: terraform/bootstrap
+
+      - name: 📝 Show Plan
+        if: inputs.action == 'plan' || inputs.action == 'apply'
+        run: terraform show tfplan
+        working-directory: terraform/bootstrap
+
+      - name: ✅ Terraform Apply
+        if: inputs.action == 'apply'
+        run: terraform apply -auto-approve tfplan
+        working-directory: terraform/bootstrap
+
+      - name: 🗑️ Terraform Destroy
+        if: inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
+        working-directory: terraform/bootstrap
+
+      - name: 📤 Output Results
+        if: inputs.action == 'apply'
+        run: terraform output
+        working-directory: terraform/bootstrap
+
+      - name: 📋 Summary
+        if: inputs.action == 'apply'
+        run: |
+          echo "## ✅ Bootstrap Completed" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**S3 Bucket:** tx01-terraform-state-maringelix-2025" >> $GITHUB_STEP_SUMMARY
+          echo "**DynamoDB Table:** tx01-terraform-state-maringelix-2025-locks" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** us-east-1" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✨ Backend provisionado com sucesso! Agora você pode executar o workflow de deploy." >> $GITHUB_STEP_SUMMARY
