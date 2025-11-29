@@ -56,23 +56,66 @@ jobs:
       - name: ▶️ Start EC2 Instances
         if: inputs.action == 'start' && steps.get-instances.outputs.instances != ''
         run: |
-          aws ec2 start-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "⏳ Waiting for instances to start..."
-          aws ec2 wait instance-running --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "✅ All instances are now running!"
+          set -e
+          echo "Registering instances to ALB target group (robust flow)..."
+          TG_NAME="tx01-tg-${{ inputs.environment }}"
+          TG_ARN=$(aws elbv2 describe-target-groups --names "$TG_NAME" --region ${{ env.AWS_REGION }} --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            echo "Target group $TG_NAME not found by name. Searching by environment..."
+            TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} --query "TargetGroups[?contains(@.TargetGroupName, '${{ inputs.environment }}')].TargetGroupArn | [0]" --output text 2>/dev/null || true)
+          fi
 
-      - name: ⏸️ Stop EC2 Instances
-        if: inputs.action == 'stop' && steps.get-instances.outputs.instances != ''
-        run: |
-          aws ec2 stop-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "⏳ Waiting for instances to stop..."
-          aws ec2 wait instance-stopped --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "✅ All instances are now stopped!"
+          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
+            echo "⚠️ Could not find target group ARN for environment: ${{ inputs.environment }}"
+            exit 0
+          fi
 
-      - name: 📊 Check Status
-        if: steps.get-instances.outputs.instances != ''
-        run: |
-          echo "## 📊 Environment Status: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "Found Target Group ARN: $TG_ARN"
+
+          # Show current targets
+          echo "Current targets before change:"
+          aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --output table || true
+
+          # Attempt to deregister any existing targets for a clean replacement
+          EXISTING_IDS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --query 'TargetHealthDescriptions[].Target.Id' --output text || true)
+          if [ -n "$EXISTING_IDS" ]; then
+            echo "Deregistering existing targets: $EXISTING_IDS"
+            for old in $EXISTING_IDS; do
+              aws elbv2 deregister-targets --target-group-arn "$TG_ARN" --targets Id=$old --region ${{ env.AWS_REGION }} || echo "warn: failed to deregister $old"
+            done
+          fi
+
+          # Register desired instances
+          echo "Registering new instances: ${{ steps.get-instances.outputs.instances }}"
+          for id in ${{ steps.get-instances.outputs.instances }}; do
+            echo "Registering instance $id"
+            aws elbv2 register-targets --target-group-arn "$TG_ARN" --targets Id=$id --region ${{ env.AWS_REGION }} || echo "warn: failed to register $id"
+          done
+
+          # Wait for targets to become healthy (timeout 180s)
+          echo "Waiting for targets to become healthy (timeout 180s)"
+          DEADLINE=$(( $(date +%s) + 180 ))
+          while [ $(date +%s) -lt $DEADLINE ]; do
+            STATES=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --query 'TargetHealthDescriptions[].TargetHealth.State' --output text || true)
+            echo "Current states: $STATES"
+            if [ -n "$STATES" ]; then
+              all_healthy=true
+              for s in $STATES; do
+                if [ "$s" != "healthy" ]; then
+                  all_healthy=false
+                  break
+                fi
+              done
+              if [ "$all_healthy" = true ]; then
+                echo "✅ All targets healthy"
+                break
+              fi
+            fi
+            sleep 10
+          done
+
+          echo "Final target health:" 
+          aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --output table || true
           echo "" >> $GITHUB_STEP_SUMMARY
           
           aws ec2 describe-instances \

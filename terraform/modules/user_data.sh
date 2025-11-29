@@ -26,6 +26,11 @@ apt-get install -y docker-ce docker-ce-cli containerd.io
 systemctl start docker
 systemctl enable docker
 
+# Install nginx locally for health checks and serving static frontend
+apt-get install -y nginx
+systemctl start nginx
+systemctl enable nginx
+
 # Install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
 apt-get install -y unzip
@@ -68,24 +73,46 @@ systemctl daemon-reload
 systemctl enable dx01-server.service
 systemctl start dx01-server.service || true
 
-# Login to ECR and pull image
-aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${ecr_registry}
+# Configure Nginx as reverse proxy for backend and static frontend
+cat > /etc/nginx/sites-available/dx01 << 'NGINX'
+server {
+    listen 80 default_server;
+    server_name _;
 
-# Pull and run container
-docker pull ${ecr_registry}/${docker_image}
-docker run -d \
-  --name tx01-nginx \
-  --restart unless-stopped \
-  -p 80:80 \
-  ${ecr_registry}/${docker_image}
+    # Health check endpoint for ALB
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
 
-# Health check
-sleep 10
-if curl -f http://localhost:80/health > /dev/null 2>&1; then
-  echo "✅ Container healthy" | tee /var/log/container-startup.log
-else
-  echo "⚠️ Container not responding" | tee /var/log/container-startup.log
-fi
+    # Proxy API requests to Node.js backend on port 5000
+    location /api/ {
+        proxy_pass http://localhost:5000/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Serve frontend static assets from Docker container
+    location / {
+        proxy_pass http://localhost:80;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+NGINX
+
+rm -f /etc/nginx/sites-enabled/default
+ln -sf /etc/nginx/sites-available/dx01 /etc/nginx/sites-enabled/dx01
+nginx -t && systemctl reload nginx
 
 # Create auto-update script for checking ECR image changes every 3 minutes
 cat > /usr/local/bin/check-ecr-updates.sh << 'EOF'
@@ -124,7 +151,7 @@ get_ecr_digest() {
     
     # Login to ECR
     aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >> "$LOG_FILE" 2>&1
-
+    
     # Pull new image
     docker pull "$ECR_REGISTRY/$DOCKER_IMAGE" >> "$LOG_FILE" 2>&1
     
@@ -165,3 +192,22 @@ systemctl enable cron
 (crontab -l 2>/dev/null; echo "*/3 * * * * /usr/local/bin/check-ecr-updates.sh") | crontab -
 
 echo "✅ Auto-update cronjob installed (runs every 3 minutes)" | tee -a /var/log/container-startup.log
+
+# Login to ECR and pull image
+aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${ecr_registry}
+
+# Pull and run container
+docker pull ${ecr_registry}/${docker_image}
+docker run -d \
+  --name tx01-nginx \
+  --restart unless-stopped \
+  -p 8080:80 \
+  ${ecr_registry}/${docker_image}
+
+# Health check
+sleep 10
+if curl -f http://localhost:8080/health > /dev/null 2>&1; then
+  echo "✅ Container healthy" | tee -a /var/log/container-startup.log
+else
+  echo "⚠️ Container not responding" | tee -a /var/log/container-startup.log
+fi
