@@ -48,31 +48,33 @@ get_running_digest() {
   docker inspect "$CONTAINER_NAME" --format='{{.Image}}' 2>/dev/null | grep -oP '@sha256:\K[a-f0-9]{64}' || echo "none"
 }
 
-# Function to get latest ECR image digest
-get_ecr_digest() {
+# Function to get latest ECR image digest and tag
+get_ecr_latest() {
   aws ecr describe-images \
     --repository-name "$(echo $DOCKER_IMAGE | cut -d':' -f1)" \
     --region "$AWS_REGION" \
-    --query 'sort_by(imageDetails, &imagePushedAt)[-1].imageDigest' \
-    --output text 2>/dev/null || echo "error"
+    --query 'sort_by(imageDetails, &imagePushedAt)[-1].[imageDigest,imageTags[0]]' \
+    --output text 2>/dev/null || echo "error none"
 }
 
 # Main logic
 {
   RUNNING_DIGEST=$(get_running_digest)
-  ECR_DIGEST=$(get_ecr_digest)
+  read ECR_DIGEST ECR_TAG <<< $(get_ecr_latest)
   
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking for ECR updates..."
-  echo "Running: $RUNNING_DIGEST | ECR: $ECR_DIGEST"
+  echo "Running: $RUNNING_DIGEST | ECR: $ECR_DIGEST (tag: $ECR_TAG)"
   
   if [ "$ECR_DIGEST" != "error" ] && [ "$ECR_DIGEST" != "none" ] && [ "$RUNNING_DIGEST" != "$ECR_DIGEST" ]; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ New image detected! Updating..."
     
+    REPO_NAME=$(echo $DOCKER_IMAGE | cut -d':' -f1)
+    
     # Login to ECR
     aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >> "$LOG_FILE" 2>&1
     
-    # Pull new image
-    docker pull "$ECR_REGISTRY/$DOCKER_IMAGE" >> "$LOG_FILE" 2>&1
+    # Pull new image by tag
+    docker pull "$ECR_REGISTRY/$REPO_NAME:$ECR_TAG" >> "$LOG_FILE" 2>&1
     
     # Stop old container
     docker stop "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
@@ -83,7 +85,7 @@ get_ecr_digest() {
       --name "$CONTAINER_NAME" \
       --restart unless-stopped \
       -p 80:80 \
-      "$ECR_REGISTRY/$DOCKER_IMAGE" >> "$LOG_FILE" 2>&1
+      "$ECR_REGISTRY/$REPO_NAME:$ECR_TAG" >> "$LOG_FILE" 2>&1
     
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Container updated successfully!"
     
