@@ -33,6 +33,41 @@ unzip awscliv2.zip
 ./aws/install
 rm -rf aws awscliv2.zip
 
+# Install Node.js (LTS) and git for running backend
+curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+apt-get install -y nodejs git
+
+# Clone dx01 repo and start backend as systemd service
+if [ ! -d /opt/dx01 ]; then
+  git clone https://github.com/maringelix/dx01.git /opt/dx01
+else
+  cd /opt/dx01 && git pull || true
+fi
+
+cd /opt/dx01/server || exit 0
+npm install --production || true
+
+cat > /etc/systemd/system/dx01-server.service << 'SERVICE'
+[Unit]
+Description=DX01 Node Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/dx01/server
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+Environment=PORT=5000
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable dx01-server.service
+systemctl start dx01-server.service || true
+
 # Login to ECR and pull image
 aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${ecr_registry}
 
