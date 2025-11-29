@@ -89,9 +89,9 @@ get_ecr_digest() {
     
     # Login to ECR
     aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY" >> "$LOG_FILE" 2>&1
-    
+
     # Pull new image
-    docker pull "${ECR_REGISTRY}/${DOCKER_IMAGE}" >> "$LOG_FILE" 2>&1
+    docker pull "$ECR_REGISTRY/$DOCKER_IMAGE" >> "$LOG_FILE" 2>&1
     
     # Stop old container
     docker stop "$CONTAINER_NAME" >> "$LOG_FILE" 2>&1
@@ -102,7 +102,7 @@ get_ecr_digest() {
       --name "$CONTAINER_NAME" \
       --restart unless-stopped \
       -p 80:80 \
-      "${ECR_REGISTRY}/${DOCKER_IMAGE}" >> "$LOG_FILE" 2>&1
+      "$ECR_REGISTRY/$DOCKER_IMAGE" >> "$LOG_FILE" 2>&1
     
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✅ Container updated successfully!"
     
