@@ -1,5 +1,5 @@
 # RDS PostgreSQL Database Module
-# Free Tier: t4g.micro, 20GB storage, PostgreSQL 15
+# Free Tier: t4g.micro, 20GB storage, using latest supported PostgreSQL major (currently 17 in us-east-1)
 
 # DB Subnet Group (private subnets)
 resource "aws_db_subnet_group" "main" {
@@ -132,8 +132,8 @@ resource "aws_db_instance" "main" {
 
 # DB Parameter Group for PostgreSQL optimization
 resource "aws_db_parameter_group" "main" {
-  name   = "${var.project_name}-pg15-params-${var.environment}"
-  family = "postgres15"
+  name   = "${var.project_name}-pg17-params-${var.environment}"
+  family = "postgres17"
 
   parameter {
     name  = "log_connections"
@@ -156,7 +156,7 @@ resource "aws_db_parameter_group" "main" {
   }
 
   tags = {
-    Name = "${var.project_name}-pg15-params-${var.environment}"
+    Name = "${var.project_name}-pg17-params-${var.environment}"
   }
 }
 
