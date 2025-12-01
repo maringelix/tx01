@@ -162,3 +162,23 @@ jobs:
             echo "Status: $FINAL_STATUS";
             echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)";
           } >> $GITHUB_STEP_SUMMARY
+
+      - name: 🌐 App Health Check (Post-Deploy)
+        if: inputs.action == 'apply' && inputs.include_db_checks == true
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -e
+          cd terraform/${{ inputs.environment }}
+          ALB=$(terraform output -raw alb_dns_name 2>/dev/null || echo "")
+          if [ -z "$ALB" ]; then
+            echo "ALB DNS output not found"; exit 0; fi
+          echo "Checking app health at http://$ALB/api/health ..."
+          RESP=$(curl -s --max-time 10 "http://$ALB/api/health" || echo "")
+          echo "Response: $RESP"
+          DB_CONNECTED=$(echo "$RESP" | jq -r '.database.connected' 2>/dev/null || echo "unknown")
+          {
+            echo "## 🌐 App Health";
+            echo "URL: http://$ALB/api/health";
+            echo "database.connected: $DB_CONNECTED";
+          } >> $GITHUB_STEP_SUMMARY
