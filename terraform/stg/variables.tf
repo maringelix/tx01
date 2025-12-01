@@ -77,3 +77,15 @@ variable "eks_node_max_size" {
   type        = number
   default     = 4
 }
+
+variable "iam_user_arn" {
+  description = "ARN of the IAM user to grant Kubernetes access"
+  type        = string
+  default     = ""
+}
+
+variable "iam_user_name" {
+  description = "Name of the IAM user to grant Kubernetes access"
+  type        = string
+  default     = ""
+}

@@ -39,4 +39,8 @@ module "infrastructure" {
   eks_node_desired_size  = var.eks_node_desired_size
   eks_node_min_size      = var.eks_node_min_size
   eks_node_max_size      = var.eks_node_max_size
+  
+  # IAM User for Kubernetes Access
+  iam_user_arn           = var.iam_user_arn
+  iam_user_name          = var.iam_user_name
 }

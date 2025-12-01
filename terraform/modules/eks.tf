@@ -4,7 +4,7 @@ resource "aws_eks_cluster" "main" {
   
   name     = "${var.project_name}-eks-${var.environment}"
   role_arn = aws_iam_role.eks_cluster[0].arn
-  version  = "1.28"
+  version  = "1.31"
 
   vpc_config {
     subnet_ids              = aws_subnet.private[*].id
@@ -276,6 +276,38 @@ output "eks_cluster_oidc_issuer_url" {
 output "eks_node_group_id" {
   description = "EKS node group ID"
   value       = var.enable_eks ? aws_eks_node_group.main[0].id : null
+}
+
+# Kubernetes ConfigMap para aws-auth
+resource "kubernetes_config_map" "aws_auth" {
+  count = var.enable_eks && var.iam_user_arn != "" ? 1 : 0
+
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles = yamlencode([
+      {
+        rolearn  = aws_iam_role.eks_node[0].arn
+        username = "system:node:{{EC2PrivateDNSName}}"
+        groups   = ["system:bootstrappers", "system:nodes"]
+      }
+    ])
+    mapUsers = yamlencode([
+      {
+        userarn  = var.iam_user_arn
+        username = var.iam_user_name
+        groups   = ["system:masters"]
+      }
+    ])
+  }
+
+  depends_on = [
+    aws_eks_cluster.main,
+    aws_eks_node_group.main
+  ]
 }
 
 output "aws_load_balancer_controller_role_arn" {
