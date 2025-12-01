@@ -58,6 +58,10 @@ DOCKER_IMAGE="${docker_image}"
 AWS_REGION="${aws_region}"
 LOG_FILE="/var/log/ecr-auto-update.log"
 
+# Ensure PATH for cron
+export PATH=/usr/local/bin:/usr/bin:/bin
+set -e
+
 # Function to get current running image digest
 get_running_digest() {
   docker inspect "$CONTAINER_NAME" --format='{{.Image}}' 2>/dev/null | grep -oP '@sha256:\K[a-f0-9]{64}' || echo "none"
@@ -158,6 +162,10 @@ CONTAINER_NAME="tx01-nginx"
 AWS_REGION="${aws_region}"
 DB_SECRET_ARN="${db_secret_arn}"
 LOG_FILE="/var/log/db-env-refresh.log"
+
+# Ensure PATH for cron
+export PATH=/usr/local/bin:/usr/bin:/bin
+set -e
 
 {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking DB env and secret..."
