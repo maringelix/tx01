@@ -1,4 +1,4 @@
-name: Switch Environment
+name: 🔄 Switch Environment
 
 on:
   workflow_dispatch:
