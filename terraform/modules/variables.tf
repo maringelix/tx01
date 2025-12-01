@@ -74,3 +74,77 @@ variable "instance_count" {
   type        = number
   default     = 2
 }
+
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
+}
+
+# Database Variables
+variable "db_allocated_storage" {
+  description = "Allocated storage for RDS in GB"
+  type        = number
+  default     = 20
+}
+
+variable "db_engine_version" {
+  description = "PostgreSQL engine version"
+  type        = string
+  default     = "17.6"
+}
+
+variable "db_instance_class" {
+  description = "RDS instance class"
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "db_name" {
+  description = "Database name"
+  type        = string
+  default     = "tx01db"
+}
+
+variable "db_username" {
+  description = "Database master username"
+  type        = string
+  default     = "tx01admin"
+}
+
+variable "db_backup_retention_period" {
+  description = "Number of days to retain database backups"
+  type        = number
+  default     = 7
+}
+
+# EKS Variables
+variable "enable_eks" {
+  description = "Enable EKS cluster creation"
+  type        = bool
+  default     = false
+}
+
+variable "eks_node_instance_type" {
+  description = "Instance type for EKS nodes"
+  type        = string
+  default     = "t3.small"
+}
+
+variable "eks_node_desired_size" {
+  description = "Desired number of nodes in EKS node group"
+  type        = number
+  default     = 2
+}
+
+variable "eks_node_min_size" {
+  description = "Minimum number of nodes in EKS node group"
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_max_size" {
+  description = "Maximum number of nodes in EKS node group"
+  type        = number
+  default     = 4
+}
