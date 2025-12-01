@@ -51,6 +51,14 @@ jobs:
           --output text)
         echo "alb_arn=$ALB_ARN" >> $GITHUB_OUTPUT
         
+        # Get VPC ID from ALB
+        VPC_ID=$(aws elbv2 describe-load-balancers \
+          --load-balancer-arns $ALB_ARN \
+          --region ${{ env.AWS_REGION }} \
+          --query 'LoadBalancers[0].VpcId' \
+          --output text)
+        echo "vpc_id=$VPC_ID" >> $GITHUB_OUTPUT
+        
         # Get Listener ARN
         LISTENER_ARN=$(aws elbv2 describe-listeners \
           --load-balancer-arn $ALB_ARN \
@@ -66,12 +74,49 @@ jobs:
           --output text)
         echo "ec2_tg_arn=$EC2_TG_ARN" >> $GITHUB_OUTPUT
         
-        # Try to get EKS Target Group ARN (pode não existir ainda)
+        # Try to get EKS Target Group ARN
         EKS_TG_ARN=$(aws elbv2 describe-target-groups \
           --region ${{ env.AWS_REGION }} \
-          --query "TargetGroups[?contains(TargetGroupName, 'k8s-default-tx01serv')].TargetGroupArn" \
+          --query "TargetGroups[?TargetGroupName=='tx01-tg-eks-${{ inputs.environment }}'].TargetGroupArn" \
           --output text || echo "")
         echo "eks_tg_arn=$EKS_TG_ARN" >> $GITHUB_OUTPUT
+
+    - name: Create EKS Target Group if not exists
+      id: create-eks-tg
+      if: inputs.mode == 'eks' || inputs.mode == 'both'
+      run: |
+        if [ -z "${{ steps.alb-info.outputs.eks_tg_arn }}" ]; then
+          echo "📦 Creating EKS target group with IP type..."
+          
+          EKS_TG_ARN=$(aws elbv2 create-target-group \
+            --name tx01-tg-eks-${{ inputs.environment }} \
+            --protocol HTTP \
+            --port 80 \
+            --vpc-id ${{ steps.alb-info.outputs.vpc_id }} \
+            --target-type ip \
+            --health-check-path /api/health \
+            --health-check-interval-seconds 30 \
+            --health-check-timeout-seconds 5 \
+            --healthy-threshold-count 2 \
+            --unhealthy-threshold-count 2 \
+            --region ${{ env.AWS_REGION }} \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text)
+          
+          echo "eks_tg_arn=$EKS_TG_ARN" >> $GITHUB_OUTPUT
+          echo "✅ EKS target group created: $EKS_TG_ARN"
+          
+          # Add forward rule to listener (priority 1 - higher than default)
+          aws elbv2 create-rule \
+            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
+            --priority 1 \
+            --conditions Field=path-pattern,Values='/*' \
+            --actions Type=forward,TargetGroupArn=$EKS_TG_ARN \
+            --region ${{ env.AWS_REGION }} || echo "Rule may already exist"
+        else
+          echo "✅ EKS target group already exists: ${{ steps.alb-info.outputs.eks_tg_arn }}"
+          echo "eks_tg_arn=${{ steps.alb-info.outputs.eks_tg_arn }}" >> $GITHUB_OUTPUT
+        fi
 
     - name: Get EC2 instances
       id: ec2-info
@@ -162,29 +207,40 @@ jobs:
         echo "⏳ Waiting for pods to be ready..."
         kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s
         
-        # Get pod IPs
+        # Get pod IPs and register in EKS target group
         POD_IPS=$(kubectl get pods -l app=tx01 -o jsonpath='{.items[*].status.podIP}')
         echo "Pod IPs: $POD_IPS"
         
-        # Register pod IPs in target group and deregister EC2s
-        echo "🔧 Registering pods in target group..."
+        # Use the output from create step or alb-info
+        EKS_TG="${{ steps.create-eks-tg.outputs.eks_tg_arn }}"
+        if [ -z "$EKS_TG" ]; then
+          EKS_TG="${{ steps.alb-info.outputs.eks_tg_arn }}"
+        fi
+        
+        echo "🔧 Registering pods in EKS target group..."
         for IP in $POD_IPS; do
           aws elbv2 register-targets \
-            --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+            --target-group-arn $EKS_TG \
             --targets Id=$IP,Port=80 \
             --region ${{ env.AWS_REGION }}
         done
         
-        # Deregister EC2 instances from target group
+        # Set EKS rule to priority 1 (higher) and default rule will be EC2
+        EKS_RULE=$(aws elbv2 describe-rules \
+          --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
+          --region ${{ env.AWS_REGION }} \
+          --query "Rules[?Actions[0].TargetGroupArn=='$EKS_TG'].RuleArn" \
+          --output text)
+        
+        if [ -n "$EKS_RULE" ]; then
+          echo "🔧 Setting EKS rule to priority 1..."
+          aws elbv2 set-rule-priorities \
+            --rule-priorities RuleArn=$EKS_RULE,Priority=1 \
+            --region ${{ env.AWS_REGION }}
+        fi
+        
+        # Stop EC2 instances
         if [ -n "${{ steps.ec2-info.outputs.instance_ids }}" ]; then
-          echo "🔧 Deregistering EC2 instances from target group..."
-          for INSTANCE in ${{ steps.ec2-info.outputs.instance_ids }}; do
-            aws elbv2 deregister-targets \
-              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
-              --targets Id=$INSTANCE \
-              --region ${{ env.AWS_REGION }} || true
-          done
-          
           echo "🛑 Stopping EC2 instances..."
           aws ec2 stop-instances \
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
@@ -232,17 +288,34 @@ jobs:
           echo "⏳ Waiting for pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s
           
-          # Get pod IPs and register
+          # Get pod IPs and register in EKS target group
           POD_IPS=$(kubectl get pods -l app=tx01 -o jsonpath='{.items[*].status.podIP}')
           echo "Pod IPs: $POD_IPS"
           
-          echo "🔧 Registering pods in target group..."
+          # Use the output from create step or alb-info
+          EKS_TG="${{ steps.create-eks-tg.outputs.eks_tg_arn }}"
+          if [ -z "$EKS_TG" ]; then
+            EKS_TG="${{ steps.alb-info.outputs.eks_tg_arn }}"
+          fi
+          
+          echo "🔧 Registering pods in EKS target group..."
           for IP in $POD_IPS; do
             aws elbv2 register-targets \
-              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+              --target-group-arn $EKS_TG \
               --targets Id=$IP,Port=80 \
               --region ${{ env.AWS_REGION }} || true
           done
+          
+          # Set both rules to same priority for load balancing
+          EKS_RULE=$(aws elbv2 describe-rules \
+            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
+            --region ${{ env.AWS_REGION }} \
+            --query "Rules[?Actions[0].TargetGroupArn=='$EKS_TG'].RuleArn" \
+            --output text)
+          
+          if [ -n "$EKS_RULE" ]; then
+            echo "🔧 Both target groups will handle traffic (default rule)..."
+          fi
         fi
         
         echo "✅ Both EC2 and EKS are now active"
