@@ -240,7 +240,7 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
   name        = "${var.project_name}-alb-controller-policy-${var.environment}"
   description = "Policy for AWS Load Balancer Controller"
 
-  policy = file("${path.module}/../../policies/alb-controller-policy.json")
+  policy = file("${path.module}/../policies/alb-controller-policy.json")
 
   tags = var.tags
 }
