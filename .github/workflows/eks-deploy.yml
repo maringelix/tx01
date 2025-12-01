@@ -275,8 +275,19 @@ jobs:
         echo "### HPA ###"
         kubectl get hpa
 
+    - name: Get pod logs if rollout failed
+      if: steps.rollout.outcome != 'success'
+      continue-on-error: true
+      run: |
+        echo "### Pod Logs ###"
+        for pod in $(kubectl get pods -l app=tx01 -o name); do
+          echo "Logs for $pod:"
+          kubectl logs $pod --tail=50 || echo "Could not get logs for $pod"
+          echo "---"
+        done
+
     - name: Check if rollout succeeded
-      if: steps.rollout.outcome == 'failure'
+      if: steps.rollout.outcome != 'success'
       run: |
         echo "::error::Deployment rollout failed. Check Debug deployment status step for details."
         exit 1
