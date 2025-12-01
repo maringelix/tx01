@@ -78,7 +78,7 @@ jobs:
       run: |
         INSTANCE_IDS=$(aws ec2 describe-instances \
           --region ${{ env.AWS_REGION }} \
-          --filters "Name=tag:Name,Values=tx01-ec2-${{ inputs.environment }}-*" "Name=instance-state-name,Values=running,stopped" \
+          --filters "Name=tag:Name,Values=tx01-ec2-*-${{ inputs.environment }}" "Name=instance-state-name,Values=running,stopped" \
           --query 'Reservations[*].Instances[*].InstanceId' \
           --output text)
         echo "instance_ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
@@ -95,7 +95,29 @@ jobs:
       run: |
         echo "🔄 Switching to EC2 mode..."
         
-        # Start EC2 instances if stopped
+        # Deregister any pod IPs from target group
+        CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text || echo "")
+        if [ -n "$CLUSTER_NAME" ]; then
+          echo "📉 Scaling down EKS deployment..."
+          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+          
+          # Get pod IPs before scaling down
+          POD_IPS=$(kubectl get pods -l app=tx01 -o jsonpath='{.items[*].status.podIP}' 2>/dev/null || echo "")
+          
+          if [ -n "$POD_IPS" ]; then
+            echo "🔧 Deregistering pods from target group..."
+            for IP in $POD_IPS; do
+              aws elbv2 deregister-targets \
+                --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+                --targets Id=$IP,Port=80 \
+                --region ${{ env.AWS_REGION }} || true
+            done
+          fi
+          
+          kubectl scale deployment tx01-app --replicas=0 || true
+        fi
+        
+        # Start EC2 instances and register in target group
         if [ -n "${{ steps.ec2-info.outputs.instance_ids }}" ]; then
           aws ec2 start-instances \
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
@@ -106,39 +128,15 @@ jobs:
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
             --region ${{ env.AWS_REGION }}
           
-          echo "✅ EC2 instances started"
-        fi
-        
-        # Scale down EKS if exists
-        CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text || echo "")
-        if [ -n "$CLUSTER_NAME" ]; then
-          echo "📉 Scaling down EKS deployment..."
-          aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
-          kubectl scale deployment tx01-app --replicas=0 || true
-        fi
-        
-        # Update ALB listener rules priority (EC2 = higher priority)
-        if [ -n "${{ steps.alb-info.outputs.eks_tg_arn }}" ]; then
-          echo "🔧 Updating ALB listener rules..."
-          
-          # Get rules
-          EC2_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.ec2_tg_arn }}'].RuleArn" \
-            --output text)
-          
-          EKS_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.eks_tg_arn }}'].RuleArn" \
-            --output text)
-          
-          if [ -n "$EC2_RULE" ] && [ -n "$EKS_RULE" ]; then
-            aws elbv2 set-rule-priorities \
-              --rule-priorities RuleArn=$EC2_RULE,Priority=50 RuleArn=$EKS_RULE,Priority=100 \
+          echo "🔧 Registering EC2 instances in target group..."
+          for INSTANCE in ${{ steps.ec2-info.outputs.instance_ids }}; do
+            aws elbv2 register-targets \
+              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+              --targets Id=$INSTANCE \
               --region ${{ env.AWS_REGION }}
-          fi
+          done
+          
+          echo "✅ EC2 instances started and registered"
         fi
         
         echo "✅ Switched to EC2 mode"
@@ -164,37 +162,35 @@ jobs:
         echo "⏳ Waiting for pods to be ready..."
         kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s
         
-        # Stop EC2 instances
+        # Get pod IPs
+        POD_IPS=$(kubectl get pods -l app=tx01 -o jsonpath='{.items[*].status.podIP}')
+        echo "Pod IPs: $POD_IPS"
+        
+        # Register pod IPs in target group and deregister EC2s
+        echo "🔧 Registering pods in target group..."
+        for IP in $POD_IPS; do
+          aws elbv2 register-targets \
+            --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+            --targets Id=$IP,Port=80 \
+            --region ${{ env.AWS_REGION }}
+        done
+        
+        # Deregister EC2 instances from target group
         if [ -n "${{ steps.ec2-info.outputs.instance_ids }}" ]; then
+          echo "🔧 Deregistering EC2 instances from target group..."
+          for INSTANCE in ${{ steps.ec2-info.outputs.instance_ids }}; do
+            aws elbv2 deregister-targets \
+              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+              --targets Id=$INSTANCE \
+              --region ${{ env.AWS_REGION }} || true
+          done
+          
           echo "🛑 Stopping EC2 instances..."
           aws ec2 stop-instances \
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
             --region ${{ env.AWS_REGION }}
           
           echo "✅ EC2 instances stopped"
-        fi
-        
-        # Update ALB listener rules priority (EKS = higher priority)
-        if [ -n "${{ steps.alb-info.outputs.eks_tg_arn }}" ]; then
-          echo "🔧 Updating ALB listener rules..."
-          
-          EC2_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.ec2_tg_arn }}'].RuleArn" \
-            --output text)
-          
-          EKS_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.eks_tg_arn }}'].RuleArn" \
-            --output text)
-          
-          if [ -n "$EC2_RULE" ] && [ -n "$EKS_RULE" ]; then
-            aws elbv2 set-rule-priorities \
-              --rule-priorities RuleArn=$EKS_RULE,Priority=50 RuleArn=$EC2_RULE,Priority=100 \
-              --region ${{ env.AWS_REGION }}
-          fi
         fi
         
         echo "✅ Switched to EKS mode"
@@ -204,7 +200,7 @@ jobs:
       run: |
         echo "🔄 Enabling both EC2 and EKS..."
         
-        # Start EC2 instances
+        # Start EC2 instances and register in target group
         if [ -n "${{ steps.ec2-info.outputs.instance_ids }}" ]; then
           aws ec2 start-instances \
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
@@ -215,10 +211,18 @@ jobs:
             --instance-ids ${{ steps.ec2-info.outputs.instance_ids }} \
             --region ${{ env.AWS_REGION }}
           
-          echo "✅ EC2 instances started"
+          echo "🔧 Registering EC2 instances in target group..."
+          for INSTANCE in ${{ steps.ec2-info.outputs.instance_ids }}; do
+            aws elbv2 register-targets \
+              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+              --targets Id=$INSTANCE \
+              --region ${{ env.AWS_REGION }} || true
+          done
+          
+          echo "✅ EC2 instances started and registered"
         fi
         
-        # Scale up EKS
+        # Scale up EKS and register pods
         CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text || echo "")
         if [ -n "$CLUSTER_NAME" ]; then
           echo "📈 Scaling up EKS deployment..."
@@ -227,29 +231,18 @@ jobs:
           
           echo "⏳ Waiting for pods to be ready..."
           kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s
-        fi
-        
-        # Set equal priority for both target groups
-        if [ -n "${{ steps.alb-info.outputs.eks_tg_arn }}" ]; then
-          echo "🔧 Setting equal priority for both target groups..."
           
-          EC2_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.ec2_tg_arn }}'].RuleArn" \
-            --output text)
+          # Get pod IPs and register
+          POD_IPS=$(kubectl get pods -l app=tx01 -o jsonpath='{.items[*].status.podIP}')
+          echo "Pod IPs: $POD_IPS"
           
-          EKS_RULE=$(aws elbv2 describe-rules \
-            --listener-arn ${{ steps.alb-info.outputs.listener_arn }} \
-            --region ${{ env.AWS_REGION }} \
-            --query "Rules[?Actions[0].TargetGroupArn=='${{ steps.alb-info.outputs.eks_tg_arn }}'].RuleArn" \
-            --output text)
-          
-          if [ -n "$EC2_RULE" ] && [ -n "$EKS_RULE" ]; then
-            aws elbv2 set-rule-priorities \
-              --rule-priorities RuleArn=$EC2_RULE,Priority=50 RuleArn=$EKS_RULE,Priority=50 \
-              --region ${{ env.AWS_REGION }}
-          fi
+          echo "🔧 Registering pods in target group..."
+          for IP in $POD_IPS; do
+            aws elbv2 register-targets \
+              --target-group-arn ${{ steps.alb-info.outputs.ec2_tg_arn }} \
+              --targets Id=$IP,Port=80 \
+              --region ${{ env.AWS_REGION }} || true
+          done
         fi
         
         echo "✅ Both EC2 and EKS are now active"
