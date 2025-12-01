@@ -49,7 +49,7 @@ if [ -n "$DB_SECRET_ARN" ]; then
 fi
 
 # Create auto-update script for checking ECR image changes every 3 minutes
-cat > /usr/local/bin/check-ecr-updates.sh << 'EOF'
+cat > /usr/local/bin/check-ecr-updates.sh << EOF
 #!/bin/bash
 
 CONTAINER_NAME="tx01-nginx"
@@ -152,7 +152,7 @@ systemctl enable cron
 (crontab -l 2>/dev/null; echo "*/3 * * * * /usr/local/bin/check-ecr-updates.sh") | crontab -
 
 # Add cronjob: refresh DB env and restart container if DB_HOST missing (every 2 minutes)
-cat > /usr/local/bin/refresh-db-env.sh << 'EOF'
+cat > /usr/local/bin/refresh-db-env.sh << EOF
 #!/bin/bash
 CONTAINER_NAME="tx01-nginx"
 AWS_REGION="${aws_region}"
