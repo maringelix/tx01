@@ -240,6 +240,48 @@ kubectl run test-pod --image=busybox --rm -it -- wget -O- http://tx01-app:80/api
 
 ---
 
-**Commit:** 03a66c7  
+**Commit:** 32d3737  
 **Data:** 01/12/2025  
 **Autor:** DevOps Team
+
+---
+
+## ⚠️ Issue Adicional Descoberto Durante Destroy
+
+### Problema: Terraform tentando recriar EC2s durante EKS destroy
+**Data:** 01/12/2025 - Workflow Run #9
+
+**Sintoma:**
+```
+Error: creating EC2 Instance: operation error EC2: RunInstances, 
+https response error StatusCode: 400, RequestID: b05eea92-a308-4837-8035-d737e6a04e4e, 
+api error InvalidParameterCombination: The specified instance type is not eligible for Free Tier.
+```
+
+**Causa:** 
+O job `eks-destroy` executava:
+```bash
+terraform plan -var="enable_eks=false" -out=tfplan
+terraform apply -auto-approve tfplan
+```
+
+Isso fazia o Terraform tentar garantir que **toda** a infraestrutura estivesse conforme o código (enable_eks=false), incluindo as instâncias EC2. Como as instâncias antigas foram terminadas e o código define `t2.micro` (mas o state tinha `t3.micro`), o Terraform tentava recriá-las e falha por causa do Free Tier.
+
+**Solução:**
+Alterado para **targeted destruction** - destruir apenas recursos EKS:
+```bash
+terraform destroy -auto-approve \
+  -target=module.infrastructure.aws_eks_node_group.main \
+  -target=module.infrastructure.aws_eks_cluster.main \
+  -target=module.infrastructure.aws_iam_role.eks_cluster \
+  # ... outros recursos EKS específicos
+```
+
+**Arquivo:** `.github/workflows/eks-deploy.yml` linhas 357-372
+
+**Commit:** 32d3737
+
+**Lição Aprendida:**
+- Use `-target` ao destruir recursos específicos para evitar side effects
+- Terraform com `enable_eks=false` tenta reconciliar TODA a infraestrutura, não apenas desabilitar EKS
+- Targeted destruction é mais seguro para workflows automatizados
