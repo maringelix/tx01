@@ -243,16 +243,28 @@ jobs:
       run: kubectl apply -f k8s/hpa.yaml
 
     - name: Wait for deployment
+      id: rollout
+      continue-on-error: true
       run: |
         kubectl rollout status deployment/tx01-app --timeout=5m
 
-    - name: Get deployment status
+    - name: Debug deployment status
+      if: always()
       run: |
         echo "### Deployment Status ###"
-        kubectl get deployments
+        kubectl get deployments -o wide
+        echo ""
+        echo "### ReplicaSets ###"
+        kubectl get replicasets -o wide
         echo ""
         echo "### Pods ###"
         kubectl get pods -o wide
+        echo ""
+        echo "### Pod Descriptions ###"
+        kubectl describe pods
+        echo ""
+        echo "### Events ###"
+        kubectl get events --sort-by=.metadata.creationTimestamp
         echo ""
         echo "### Services ###"
         kubectl get svc
@@ -262,6 +274,12 @@ jobs:
         echo ""
         echo "### HPA ###"
         kubectl get hpa
+
+    - name: Check if rollout succeeded
+      if: steps.rollout.outcome == 'failure'
+      run: |
+        echo "::error::Deployment rollout failed. Check Debug deployment status step for details."
+        exit 1
 
     - name: Get ALB DNS
       run: |
