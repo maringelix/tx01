@@ -278,8 +278,8 @@ output "eks_node_group_id" {
   value       = var.enable_eks ? aws_eks_node_group.main[0].id : null
 }
 
-# Kubernetes ConfigMap para aws-auth
-resource "kubernetes_config_map" "aws_auth" {
+# Kubernetes ConfigMap para aws-auth (manage existing ConfigMap created by EKS)
+resource "kubernetes_config_map_v1_data" "aws_auth" {
   count = var.enable_eks && var.iam_user_arn != "" ? 1 : 0
 
   metadata {
@@ -303,6 +303,8 @@ resource "kubernetes_config_map" "aws_auth" {
       }
     ])
   }
+
+  force = true
 
   depends_on = [
     aws_eks_cluster.main,

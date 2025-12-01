@@ -53,16 +53,28 @@ jobs:
       working-directory: terraform/${{ inputs.environment }}
       run: terraform init
 
-    - name: Terraform Plan (Enable EKS)
+    - name: Terraform Apply (EKS Resources Only)
       working-directory: terraform/${{ inputs.environment }}
       run: |
-        terraform plan \
+        # Apply only EKS-related resources using targeted apply
+        terraform apply -auto-approve \
           -var="enable_eks=true" \
-          -out=tfplan
-
-    - name: Terraform Apply
-      working-directory: terraform/${{ inputs.environment }}
-      run: terraform apply -auto-approve tfplan
+          -target=module.infrastructure.aws_iam_role.eks_cluster \
+          -target=module.infrastructure.aws_iam_role.eks_node \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_node_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
+          -target=module.infrastructure.aws_security_group.eks_cluster \
+          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
+          -target=module.infrastructure.aws_eks_cluster.main \
+          -target=module.infrastructure.aws_eks_node_group.main \
+          -target=module.infrastructure.data.tls_certificate.eks \
+          -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
+          -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
+          -target=module.infrastructure.aws_iam_policy.aws_load_balancer_controller \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller \
+          -target=module.infrastructure.kubernetes_config_map_v1_data.aws_auth
 
     - name: Get EKS cluster info
       id: eks-info
@@ -363,6 +375,7 @@ jobs:
       run: |
         # Destroy only EKS-related resources without affecting EC2
         terraform destroy -auto-approve \
+          -target=module.infrastructure.kubernetes_config_map_v1_data.aws_auth \
           -target=module.infrastructure.aws_eks_node_group.main \
           -target=module.infrastructure.aws_eks_cluster.main \
           -target=module.infrastructure.aws_iam_role.eks_cluster \
@@ -372,8 +385,7 @@ jobs:
           -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
           -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
           -target=module.infrastructure.aws_security_group.eks_cluster \
-          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
-          -target=module.infrastructure.kubernetes_config_map.aws_auth
+          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster
 
     - name: Verify destruction
       run: |
