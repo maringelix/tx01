@@ -73,9 +73,7 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
 # RDS PostgreSQL Instance
 resource "aws_db_instance" "main" {
   identifier     = "${var.project_name}-db-${var.environment}"
-  engine         = "postgres"
-  # Use a currently supported minor version (15.4). 15.5 not yet available in us-east-1.
-  engine_version = "15.4"
+  engine         = "postgres" # Let AWS choose latest supported minor (omit engine_version)
 
   # Free Tier: t4g.micro (ARM-based, better performance than t3.micro)
   instance_class = var.environment == "prd" ? "db.t4g.micro" : "db.t4g.micro"
