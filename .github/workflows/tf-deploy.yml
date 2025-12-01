@@ -24,6 +24,11 @@ on:
         required: false
         default: false
         type: boolean
+      include_db_checks:
+        description: 'After apply: gather RDS & secret status summary'
+        required: false
+        default: true
+        type: boolean
 
 env:
   AWS_REGION: us-east-1
@@ -89,3 +94,71 @@ jobs:
         if: inputs.action == 'apply'
         run: terraform output
         working-directory: terraform/${{ inputs.environment }}
+
+      - name: 🗄️ RDS Status & Secret (Post-Deploy)
+        if: inputs.action == 'apply' && inputs.include_db_checks == true
+        env:
+          ENV: ${{ inputs.environment }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -e
+          echo "Collecting RDS & Secrets status..."
+          DB_ID="tx01-db-${ENV}"
+          # RDS status & endpoint (endpoint only appears when available)
+          aws rds describe-db-instances \
+            --db-instance-identifier "$DB_ID" \
+            --query 'DBInstances[0].{Status:DBInstanceStatus,Endpoint:Endpoint.Address,Engine:Engine,Class:DBInstanceClass,MultiAZ:MultiAZ}' \
+            --output table || echo "RDS instance not found yet"
+
+          # Secret ARN from terraform output (non-sensitive) if present
+          if terraform output -json | jq -e '.db_secret_arn' >/dev/null 2>&1; then
+            SECRET_ARN=$(terraform output -raw db_secret_arn 2>/dev/null || true)
+            if [ -n "$SECRET_ARN" ]; then
+              echo "Secret ARN: $SECRET_ARN"
+              aws secretsmanager describe-secret --secret-id "$SECRET_ARN" --query '{Name:Name,RotationEnabled:RotationEnabled,CreatedDate:CreatedDate}' --output table || true
+            else
+              echo "Secret ARN output not available (possibly not applied yet)."
+            fi
+          else
+            echo "Terraform output 'db_secret_arn' not defined or unavailable."
+          fi
+
+          # Compose summary
+          {
+            echo "## 🗄️ RDS Post-Deploy (${ENV})";
+            echo "";
+            echo "**Instance ID:** $DB_ID";
+            DB_STATUS=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "unknown")
+            echo "**Status:** $DB_STATUS";
+            DB_ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --query 'DBInstances[0].Endpoint.Address' --output text 2>/dev/null || echo "pending")
+            echo "**Endpoint:** $DB_ENDPOINT";
+            echo "**Engine/Class:** $(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --query 'DBInstances[0].[Engine,DBInstanceClass]' --output text 2>/dev/null || echo "n/a")";
+            echo "";
+            if [ -n "$SECRET_ARN" ]; then
+              echo "**Secret:** $SECRET_ARN";
+            fi
+            echo "**Notes:** Endpoint may be 'pending' for several minutes after creation.";
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: 🔍 Wait for RDS Available (Optional Fast Check)
+        if: inputs.action == 'apply' && inputs.include_db_checks == true
+        env:
+          ENV: ${{ inputs.environment }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          DB_ID="tx01-db-${ENV}"
+          echo "Waiting up to 8 minutes for RDS to become 'available'..."
+          END_TIME=$(( $(date +%s) + 480 ))
+          while [ $(date +%s) -lt $END_TIME ]; do
+            STATUS=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "not-found")
+            echo "Current status: $STATUS"
+            if [ "$STATUS" = "available" ]; then
+              echo "RDS is available."; break; fi
+            sleep 20
+          done
+          FINAL_STATUS=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo "not-found")
+          {
+            echo "## ⏱️ Final RDS Status";
+            echo "Status: $FINAL_STATUS";
+            echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)";
+          } >> $GITHUB_STEP_SUMMARY
