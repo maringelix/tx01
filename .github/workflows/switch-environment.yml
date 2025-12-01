@@ -79,7 +79,7 @@ jobs:
         INSTANCE_IDS=$(aws ec2 describe-instances \
           --region ${{ env.AWS_REGION }} \
           --filters "Name=tag:Name,Values=tx01-ec2-*-${{ inputs.environment }}" "Name=instance-state-name,Values=running,stopped" \
-          --query 'Reservations[*].Instances[*].InstanceId' \
+          --query 'Reservations[].Instances[].InstanceId' \
           --output text)
         echo "instance_ids=$INSTANCE_IDS" >> $GITHUB_OUTPUT
 
