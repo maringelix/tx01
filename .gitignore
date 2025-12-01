@@ -44,3 +44,5 @@ terraform.rc
 *.pub
 add-ssh-key.sh
 AWS_IAM_POLICY_SSM.json
+ssh_keys/tx01-deploy-key
+ssh_keys/*.pem

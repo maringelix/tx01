@@ -103,6 +103,21 @@ resource "aws_iam_instance_profile" "ec2_profile" {
   role = aws_iam_role.ec2_role.name
 }
 
+# SSH Key Pair for EC2 access
+resource "aws_key_pair" "deploy_key" {
+  key_name   = "tx01-deploy-key"
+  public_key = var.ssh_public_key != "" ? var.ssh_public_key : file("${path.module}/../../ssh_keys/tx01-deploy-key.pub")
+  
+  tags = {
+    Name        = "${var.project_name}-deploy-key-${var.environment}"
+    Environment = var.environment
+  }
+  
+  lifecycle {
+    ignore_changes = [public_key]
+  }
+}
+
 # EC2 Instances
 resource "aws_instance" "web" {
   count                    = var.instance_count
@@ -113,7 +128,7 @@ resource "aws_instance" "web" {
   iam_instance_profile     = aws_iam_instance_profile.ec2_profile.name
   user_data                = local.user_data
   associate_public_ip_address = true
-  key_name                 = "tx01-deploy-key"
+  key_name                 = aws_key_pair.deploy_key.key_name
 
   monitoring = true
 

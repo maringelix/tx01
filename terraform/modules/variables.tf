@@ -45,6 +45,12 @@ variable "key_name" {
   default     = ""
 }
 
+variable "ssh_public_key" {
+  description = "SSH public key content (optional, will use file if not provided)"
+  type        = string
+  default     = ""
+}
+
 variable "waf_ip_whitelist" {
   description = "IP whitelist for WAF"
   type        = list(string)

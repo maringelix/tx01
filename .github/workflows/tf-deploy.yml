@@ -95,6 +95,41 @@ jobs:
         run: terraform output
         working-directory: terraform/${{ inputs.environment }}
 
+      - name: 🔑 Export EC2 SSH Key to Secrets Manager
+        if: inputs.action == 'apply' && inputs.recreate_ec2 == true
+        env:
+          ENV: ${{ inputs.environment }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -e
+          KEY_NAME="tx01-deploy-key"
+          SECRET_NAME="tx01-ec2-ssh-key-${ENV}"
+          
+          echo "Checking if EC2 key pair exists..."
+          if aws ec2 describe-key-pairs --key-names "$KEY_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Key pair $KEY_NAME exists in AWS EC2"
+            
+            # Check if we have the private key locally (from previous creation)
+            if [ -f "/tmp/${KEY_NAME}.pem" ]; then
+              echo "Found local private key, storing in Secrets Manager..."
+              aws secretsmanager create-secret \
+                --name "$SECRET_NAME" \
+                --description "EC2 SSH private key for ${ENV}" \
+                --secret-string file:///tmp/${KEY_NAME}.pem \
+                --region "$AWS_REGION" 2>/dev/null || \
+              aws secretsmanager update-secret \
+                --secret-id "$SECRET_NAME" \
+                --secret-string file:///tmp/${KEY_NAME}.pem \
+                --region "$AWS_REGION"
+              echo "✅ SSH key stored in Secrets Manager: $SECRET_NAME"
+              rm -f /tmp/${KEY_NAME}.pem
+            else
+              echo "⚠️ Private key not found locally. Key pair exists but private key must be retrieved manually or recreated."
+            fi
+          else
+            echo "Key pair doesn't exist, will be created by Terraform on next apply."
+          fi
+
       - name: 🗄️ RDS Status & Secret (Post-Deploy)
         if: inputs.action == 'apply' && inputs.include_db_checks == true
         env:
