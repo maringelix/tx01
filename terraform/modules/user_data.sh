@@ -148,8 +148,66 @@ apt-get install -y cron
 systemctl start cron
 systemctl enable cron
 
-# Add cronjob: run every 3 minutes
+# Add cronjob: run ECR check every 3 minutes
 (crontab -l 2>/dev/null; echo "*/3 * * * * /usr/local/bin/check-ecr-updates.sh") | crontab -
+
+# Add cronjob: refresh DB env and restart container if DB_HOST missing (every 2 minutes)
+cat > /usr/local/bin/refresh-db-env.sh << 'EOF'
+#!/bin/bash
+CONTAINER_NAME="tx01-nginx"
+AWS_REGION="${aws_region}"
+DB_SECRET_ARN="${db_secret_arn}"
+LOG_FILE="/var/log/db-env-refresh.log"
+
+{
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Checking DB env and secret..."
+  if [ -z "$DB_SECRET_ARN" ]; then
+    echo "Secret ARN not set; skipping"
+    exit 0
+  fi
+
+  SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id "$DB_SECRET_ARN" --region "$AWS_REGION" --query SecretString --output text 2>/dev/null || echo "")
+  HOST=$(echo "$SECRET_JSON" | jq -r .host 2>/dev/null)
+  PORT=$(echo "$SECRET_JSON" | jq -r .port 2>/dev/null)
+  NAME=$(echo "$SECRET_JSON" | jq -r .dbname 2>/dev/null)
+  USER=$(echo "$SECRET_JSON" | jq -r .username 2>/dev/null)
+  PASS=$(echo "$SECRET_JSON" | jq -r .password 2>/dev/null)
+
+  if [ -z "$HOST" ] || [ "$HOST" = "null" ]; then
+    echo "DB host not yet available; will retry later"
+    exit 0
+  fi
+
+  # Check current container env for DB_HOST
+  CURRENT_HOST=$(docker inspect "$CONTAINER_NAME" --format='{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | grep '^DB_HOST=' | cut -d'=' -f2)
+  if [ -z "$CURRENT_HOST" ] || [ "$CURRENT_HOST" = "null" ]; then
+    echo "Injecting DB env and restarting container..."
+    IMAGE=$(docker inspect "$CONTAINER_NAME" --format='{{.Config.Image}}' 2>/dev/null)
+    if [ -z "$IMAGE" ]; then
+      echo "Container not found; nothing to restart"
+      exit 0
+    fi
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker rm "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker run -d \
+      --name "$CONTAINER_NAME" \
+      --restart unless-stopped \
+      -p 80:80 \
+      -e DB_HOST="$HOST" \
+      -e DB_PORT="$PORT" \
+      -e DB_NAME="$NAME" \
+      -e DB_USER="$USER" \
+      -e DB_PASSWORD="$PASS" \
+      "$IMAGE"
+    echo "Container restarted with DB env"
+  else
+    echo "Container already has DB env; nothing to do"
+  fi
+} >> "$LOG_FILE" 2>&1
+EOF
+
+chmod +x /usr/local/bin/refresh-db-env.sh
+(crontab -l 2>/dev/null; echo "*/2 * * * * /usr/local/bin/refresh-db-env.sh") | crontab -
 
 echo "✅ Auto-update cronjob installed (runs every 3 minutes)" | tee -a /var/log/container-startup.log
 
