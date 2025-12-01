@@ -22,7 +22,6 @@ spec:
         app: tx01
         environment: ${ENVIRONMENT}
     spec:
-      serviceAccountName: tx01-sa
       containers:
       - name: tx01-nginx
         image: ${ECR_REPOSITORY_URL}:${IMAGE_TAG}
