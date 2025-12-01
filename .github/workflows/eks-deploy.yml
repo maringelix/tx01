@@ -358,16 +358,22 @@ jobs:
       working-directory: terraform/${{ inputs.environment }}
       run: terraform init
 
-    - name: Terraform Plan (Disable EKS)
+    - name: Terraform Destroy EKS Resources
       working-directory: terraform/${{ inputs.environment }}
       run: |
-        terraform plan \
-          -var="enable_eks=false" \
-          -out=tfplan
-
-    - name: Terraform Apply
-      working-directory: terraform/${{ inputs.environment }}
-      run: terraform apply -auto-approve tfplan
+        # Destroy only EKS-related resources without affecting EC2
+        terraform destroy -auto-approve \
+          -target=module.infrastructure.aws_eks_node_group.main \
+          -target=module.infrastructure.aws_eks_cluster.main \
+          -target=module.infrastructure.aws_iam_role.eks_cluster \
+          -target=module.infrastructure.aws_iam_role.eks_node \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_node_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
+          -target=module.infrastructure.aws_security_group.eks_cluster \
+          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
+          -target=module.infrastructure.kubernetes_config_map.aws_auth
 
     - name: Verify destruction
       run: |
