@@ -18,3 +18,14 @@ output "vpc_id" {
   description = "VPC ID (STG)"
   value       = module.infrastructure.vpc_id
 }
+
+output "db_endpoint" {
+  description = "RDS Database Endpoint (STG)"
+  value       = module.infrastructure.db_instance_endpoint
+  sensitive   = true
+}
+
+output "db_secret_arn" {
+  description = "Database Credentials Secret ARN (STG)"
+  value       = module.infrastructure.db_secret_arn
+}

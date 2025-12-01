@@ -21,6 +21,7 @@ locals {
     docker_image  = "${var.project_name}-nginx:${var.docker_image_tag}"
     environment   = var.environment
     aws_region    = var.aws_region
+    db_secret_arn = aws_secretsmanager_secret.db_credentials.arn
   }))
 }
 
@@ -72,6 +73,25 @@ resource "aws_iam_role_policy" "ecr_access" {
           "logs:PutLogEvents"
         ]
         Resource = "*"
+      }
+    ]
+  })
+}
+
+# IAM Policy para acesso ao Secrets Manager (credenciais do DB)
+resource "aws_iam_role_policy" "secrets_access" {
+  name   = "${var.project_name}-secrets-access-${var.environment}"
+  role   = aws_iam_role.ec2_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret"
+        ]
+        Resource = aws_secretsmanager_secret.db_credentials.arn
       }
     ]
   })
