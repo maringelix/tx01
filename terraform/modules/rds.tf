@@ -114,8 +114,7 @@ resource "aws_db_instance" "main" {
   # Deletion protection for production
   deletion_protection = var.environment == "prd" ? true : false
 
-  # Parameter group for PostgreSQL tuning
-  parameter_group_name = aws_db_parameter_group.main.name
+  # Using AWS default parameter group (custom group removed to avoid static parameter apply issues)
 
   tags = {
     Name        = "${var.project_name}-db-${var.environment}"
@@ -131,34 +130,6 @@ resource "aws_db_instance" "main" {
 }
 
 # DB Parameter Group for PostgreSQL optimization
-resource "aws_db_parameter_group" "main" {
-  name   = "${var.project_name}-pg17-params-${var.environment}"
-  family = "postgres17"
-
-  parameter {
-    name  = "log_connections"
-    value = "1"
-  }
-
-  parameter {
-    name  = "log_disconnections"
-    value = "1"
-  }
-
-  parameter {
-    name  = "log_duration"
-    value = "1"
-  }
-
-  parameter {
-    name  = "shared_preload_libraries"
-    value = "pg_stat_statements"
-  }
-
-  tags = {
-    Name = "${var.project_name}-pg17-params-${var.environment}"
-  }
-}
 
 # CloudWatch Log Group for RDS logs
 resource "aws_cloudwatch_log_group" "rds" {
