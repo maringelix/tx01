@@ -118,6 +118,51 @@ jobs:
           echo "eks_tg_arn=${{ steps.alb-info.outputs.eks_tg_arn }}" >> $GITHUB_OUTPUT
         fi
 
+    - name: Configure Security Groups for EKS
+      if: inputs.mode == 'eks' || inputs.mode == 'both'
+      run: |
+        echo "🔒 Configuring security groups..."
+        
+        # Get ALB security group
+        ALB_SG=$(aws elbv2 describe-load-balancers \
+          --load-balancer-arns ${{ steps.alb-info.outputs.alb_arn }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'LoadBalancers[0].SecurityGroups[0]' \
+          --output text)
+        echo "ALB Security Group: $ALB_SG"
+        
+        # Get EKS node security group (from first node)
+        CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text)
+        NODE_SG=$(aws eks describe-cluster \
+          --name $CLUSTER_NAME \
+          --region ${{ env.AWS_REGION }} \
+          --query 'cluster.resourcesVpcConfig.clusterSecurityGroupId' \
+          --output text)
+        
+        # Also get the node group security group
+        NODE_GROUP_SG=$(aws ec2 describe-instances \
+          --region ${{ env.AWS_REGION }} \
+          --filters "Name=tag:eks:cluster-name,Values=$CLUSTER_NAME" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[0].Instances[0].SecurityGroups[0].GroupId' \
+          --output text)
+        
+        echo "Node Security Groups: $NODE_SG, $NODE_GROUP_SG"
+        
+        # Allow ALB to reach pods on port 80
+        for SG in $NODE_SG $NODE_GROUP_SG; do
+          if [ -n "$SG" ] && [ "$SG" != "None" ]; then
+            echo "Adding ingress rule to $SG..."
+            aws ec2 authorize-security-group-ingress \
+              --group-id $SG \
+              --protocol tcp \
+              --port 80 \
+              --source-group $ALB_SG \
+              --region ${{ env.AWS_REGION }} 2>/dev/null || echo "Rule may already exist"
+          fi
+        done
+        
+        echo "✅ Security groups configured"
+
     - name: Get EC2 instances
       id: ec2-info
       run: |
