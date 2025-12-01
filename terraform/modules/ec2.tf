@@ -142,6 +142,13 @@ resource "aws_instance" "web" {
     Name = "${var.project_name}-ec2-${count.index + 1}-${var.environment}"
   }
 
+  lifecycle {
+    ignore_changes = [
+      instance_type,  # Ignorar mudanças de instance_type (free tier restriction)
+      ami             # Ignorar mudanças de AMI para evitar recriação
+    ]
+  }
+
   depends_on = [aws_nat_gateway.main]
 }
 
