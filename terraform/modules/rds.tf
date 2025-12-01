@@ -74,7 +74,8 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
 resource "aws_db_instance" "main" {
   identifier     = "${var.project_name}-db-${var.environment}"
   engine         = "postgres"
-  engine_version = "15.5"
+  # Use a currently supported minor version (15.4). 15.5 not yet available in us-east-1.
+  engine_version = "15.4"
 
   # Free Tier: t4g.micro (ARM-based, better performance than t3.micro)
   instance_class = var.environment == "prd" ? "db.t4g.micro" : "db.t4g.micro"
