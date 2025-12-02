@@ -1,0 +1,14 @@
+name: 🔄 Switch Environment
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  placeholder:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📋 Info
+        run: echo "Environment switch workflow - Coming soon"
