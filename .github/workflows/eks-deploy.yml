@@ -153,6 +153,13 @@ jobs:
         CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text)
         echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
 
+    - name: Check if EKS cluster exists
+      run: |
+        if [ -z "${{ steps.eks-info.outputs.cluster_name }}" ]; then
+          echo "EKS cluster not found, skipping deployment"
+          exit 0
+        fi
+
     - name: Update kubeconfig
       run: |
         aws eks update-kubeconfig \
