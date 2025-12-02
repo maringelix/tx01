@@ -74,3 +74,52 @@ variable "instance_count" {
   type        = number
   default     = 2
 }
+
+variable "tags" {
+  description = "Tags to apply to resources"
+  type        = map(string)
+  default     = {}
+}
+
+# EKS Variables
+variable "enable_eks" {
+  description = "Enable EKS cluster creation"
+  type        = bool
+  default     = false
+}
+
+variable "eks_node_instance_type" {
+  description = "Instance type for EKS nodes"
+  type        = string
+  default     = "t3.small"
+}
+
+variable "eks_node_desired_size" {
+  description = "Desired number of nodes in EKS node group"
+  type        = number
+  default     = 2
+}
+
+variable "eks_node_min_size" {
+  description = "Minimum number of nodes in EKS node group"
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_max_size" {
+  description = "Maximum number of nodes in EKS node group"
+  type        = number
+  default     = 4
+}
+
+variable "iam_user_arn" {
+  description = "ARN of the IAM user to grant Kubernetes access"
+  type        = string
+  default     = ""
+}
+
+variable "iam_user_name" {
+  description = "Name of the IAM user to grant Kubernetes access"
+  type        = string
+  default     = ""
+}
