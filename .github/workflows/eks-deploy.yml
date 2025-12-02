@@ -73,8 +73,7 @@ jobs:
           -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
           -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
           -target=module.infrastructure.aws_iam_policy.aws_load_balancer_controller \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller \
-          -target=module.infrastructure.kubernetes_config_map_v1_data.aws_auth
+          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller
 
     - name: Get EKS cluster info
       id: eks-info
