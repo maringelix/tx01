@@ -20,27 +20,14 @@ terraform {
 module "infrastructure" {
   source = "../modules"
   
-  project_name          = var.project_name
-  environment           = var.environment
-  vpc_cidr              = var.vpc_cidr
+  project_name          = "tx01"
+  environment           = "stg"
+  vpc_cidr              = "10.0.0.0/16"
   availability_zones    = ["us-east-1a", "us-east-1b"]
   public_subnet_cidrs   = ["10.0.1.0/24", "10.0.2.0/24"]
   private_subnet_cidrs  = ["10.0.11.0/24", "10.0.12.0/24"]
-  instance_type         = var.instance_type
+  instance_type         = "t3.micro"
   ami_id                = "ami-0c02fb55b34e3cf00" # Amazon Linux 2023
   waf_ip_whitelist      = []
-  instance_count        = var.instance_count
-  aws_region            = var.aws_region
-  tags                  = var.tags
-  
-  # EKS Configuration
-  enable_eks             = var.enable_eks
-  eks_node_instance_type = var.eks_node_instance_type
-  eks_node_desired_size  = var.eks_node_desired_size
-  eks_node_min_size      = var.eks_node_min_size
-  eks_node_max_size      = var.eks_node_max_size
-  
-  # IAM User for Kubernetes Access
-  iam_user_arn           = var.iam_user_arn
-  iam_user_name          = var.iam_user_name
+  instance_count        = 2
 }

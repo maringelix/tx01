@@ -1,14 +1,11 @@
 FROM nginx:alpine
 
-# Remove configuração padrão
+# Remover configuração padrão
 RUN rm /etc/nginx/conf.d/default.conf
 
 # Copiar configuração customizada
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY default.conf /etc/nginx/conf.d/default.conf
-
-# Copiar assets customizados (overrides)
-COPY assets/ /usr/share/nginx/html/assets/
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

@@ -1,76 +1,45 @@
-# TX01 - Infraestrutura AWS com Terraform, EKS e CI/CD
+# TX01 - Infraestrutura AWS com Terraform e CI/CD
 
-Infraestrutura profissional de DevOps com opções de deployment em **EC2** ou **EKS (Kubernetes)**, incluindo Docker, Nginx, ALB, RDS PostgreSQL, WAF, ECR e CI/CD automatizado via GitHub Actions.
+Infraestrutura profissional de DevOps com 2 instâncias EC2, Docker, Nginx, ALB, WAF, ECR e CI/CD automatizado via GitHub Actions.
 
 ## 📋 Arquitetura
 
-### Arquitetura Híbrida (EC2 + EKS)
-
 ```
-                          ┌─────────────────┐
-                          │       WAF       │
-                          └────────┬────────┘
-                                   │
-                          ┌────────▼────────┐
-                          │       ALB       │
-                          │  (Compartilhado)│
-                          └────┬──────┬─────┘
-                               │      │
-                ┌──────────────┘      └──────────────┐
-                │                                     │
-        ┌───────▼────────┐                   ┌───────▼────────┐
-        │  Target Group  │                   │  Target Group  │
-        │      EC2       │                   │      EKS       │
-        └───────┬────────┘                   └───────┬────────┘
-                │                                     │
-        ┌───────▼────────┐                   ┌───────▼────────┐
-        │  2x EC2 Instances│                 │  EKS Cluster   │
-        │  + Docker       │                  │  + Kubernetes  │
-        └───────┬────────┘                   │  + HPA (2-10)  │
-                │                             └───────┬────────┘
-                └─────────────┬───────────────────────┘
-                              │
-                     ┌────────▼────────┐
-                     │  RDS PostgreSQL │
-                     │  (Compartilhado)│
-                     └────────┬────────┘
-                              │
-                     ┌────────▼────────┐
-                     │ Secrets Manager │
-                     │  + ECR Registry │
-                     └─────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                   Internet                           │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                  ┌────▼────┐
+                  │   WAF    │ (AWS WAF v2)
+                  └────┬────┘
+                       │
+              ┌────────▼────────┐
+              │  ALB (us-east-1)│
+              └────────┬────────┘
+                       │
+         ┌─────────────┴──────────────┐
+         │                            │
+    ┌────▼─────┐              ┌────▼─────┐
+    │ EC2-1    │              │ EC2-2    │
+    │ (Nginx)  │              │ (Nginx)  │
+    │ Docker   │              │ Docker   │
+    └────┬─────┘              └────┬─────┘
+         │                         │
+         └────────────┬───────────┘
+                      │
+                  ┌───▼────┐
+                  │  ECR   │
+                  │ (Image)│
+                  └────────┘
 ```
 
 ## 🚀 Tecnologias
 
 - **Terraform**: Infrastructure as Code
-- **AWS**: VPC, EC2, EKS, ALB, WAF, RDS, ECR, Secrets Manager
-- **Kubernetes**: EKS com auto-scaling (HPA)
-- **Docker**: Nginx + Node.js containerizado
-- **PostgreSQL**: RDS com SSL/TLS
-- **GitHub Actions**: CI/CD Pipeline completo
+- **AWS**: VPC, EC2, ALB, WAF, ECR
+- **Docker**: Nginx containerizado
+- **GitHub Actions**: CI/CD Pipeline
 - **CloudWatch**: Monitoramento e logs
-
-## ✨ Novidades - Migração EKS
-
-Este projeto agora suporta **deployment híbrido**:
-- 🐳 **EC2 Mode**: 2x EC2 t2.micro com Docker (~$82/mês)
-- ☸️ **EKS Mode**: Kubernetes cluster gerenciado (~$172/mês)
-- 🔄 **Both Mode**: Ambos ativos simultaneamente para testes
-
-### Vantagens do EKS
-
-| Recurso | EC2 | EKS |
-|---------|-----|-----|
-| Auto-scaling | ❌ | ✅ (HPA: 2-10 pods) |
-| Zero-downtime deploys | ⚠️ Manual | ✅ Automático |
-| Health checks | ⚠️ ALB apenas | ✅ ALB + K8s probes |
-| Resource limits | ❌ | ✅ CPU/Memory por pod |
-| Self-healing | ❌ | ✅ Restart automático |
-| Rollback | ⚠️ Manual | ✅ 1 comando |
-| Gerenciamento | 🔧 SSH manual | 🎮 kubectl/API |
-
-📖 **Guia completo**: [EKS_MIGRATION.md](EKS_MIGRATION.md)
 
 ## 📁 Estrutura do Projeto
 
@@ -80,90 +49,53 @@ tx01/
 │   ├── stg/                    # Configuração Staging
 │   │   ├── main.tf
 │   │   ├── outputs.tf
-│   │   ├── variables.tf
 │   │   └── terraform.tfvars
 │   ├── prd/                    # Configuração Production
+│   │   ├── main.tf
+│   │   ├── outputs.tf
+│   │   └── terraform.tfvars
 │   ├── modules/                # Módulos reutilizáveis
 │   │   ├── vpc.tf
 │   │   ├── security_groups.tf
 │   │   ├── ec2.tf
 │   │   ├── alb.tf
-│   │   ├── rds.tf              # ⭐ PostgreSQL RDS
-│   │   ├── eks.tf              # ⭐ EKS Cluster + Nodes
 │   │   ├── ecr.tf
 │   │   └── waf.tf
-│   ├── policies/
-│   │   └── alb-controller-policy.json
-│   └── bootstrap/              # Estado remoto S3 + DynamoDB
-├── k8s/                        # ⭐ Kubernetes Manifests
-│   ├── deployment.yaml
-│   ├── service.yaml
-│   ├── ingress.yaml
-│   ├── hpa.yaml
-│   ├── serviceaccount.yaml
-│   └── secret.yaml
+│   ├── provider.tf
+│   ├── variables.tf
+│   └── user_data.sh
 ├── docker/
 │   ├── Dockerfile
 │   ├── nginx.conf
-│   └── default.conf
+│   ├── default.conf
+│   └── .dockerignore
 ├── .github/workflows/
-│   ├── terraform-deploy.yml
-│   ├── deploy-dx01.yml
-│   ├── manage-environment.yml
-│   ├── eks-deploy.yml          # ⭐ EKS provision/deploy/destroy
-│   └── switch-environment.yml  # ⭐ Alternar EC2/EKS/Both
-├── EKS_MIGRATION.md           # ⭐ Guia de migração EKS
-├── eks-helper.sh              # ⭐ Script auxiliar kubectl
+│   ├── docker-build.yml
+│   ├── terraform-validate.yml
+│   └── deploy.yml
 └── README.md
 ```
 
 ## 🚀 Início Rápido
 
-### Opção 1: Deploy EC2 (Tradicional)
-
+### 1. Clonar
 ```bash
-# 1. Clonar
 git clone https://github.com/maringelix/tx01.git
 cd tx01
+```
 
-# 2. Configurar AWS
+### 2. Configurar AWS
+```bash
 aws configure
-
-# 3. Deploy Staging via GitHub Actions
-# Ir em Actions → Terraform Deploy
-# Selecionar: environment=stg, action=apply
+# Digite suas credenciais AWS
 ```
 
-### Opção 2: Deploy EKS (Kubernetes)
-
+### 3. Deploy Staging
 ```bash
-# 1. Provisionar cluster EKS
-# GitHub Actions → EKS Deploy
-# Selecionar: environment=stg, action=provision
-# ⏳ Aguardar 15-20 minutos
-
-# 2. Deploy da aplicação
-# GitHub Actions → EKS Deploy
-# Selecionar: environment=stg, action=deploy
-# ⏳ Aguardar 3-5 minutos
-
-# 3. Verificar
-./eks-helper.sh stg status
-```
-
-### Opção 3: Alternar entre EC2 e EKS
-
-```bash
-# Via GitHub Actions → Switch Environment
-
-# Apenas EC2 (~$82/mês)
-Mode: ec2
-
-# Apenas EKS (~$172/mês)
-Mode: eks
-
-# Ambos ativos (~$188/mês)
-Mode: both
+cd terraform/stg
+terraform init
+terraform plan
+terraform apply
 ```
 
 ### 4. Acessar Aplicação

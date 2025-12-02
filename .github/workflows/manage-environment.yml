@@ -53,140 +53,32 @@ jobs:
           echo "instances=$INSTANCE_IDS" >> $GITHUB_OUTPUT
           echo "✅ Found instances: $INSTANCE_IDS"
 
-      - name: 🗄️ RDS ${{ inputs.action }}
-        if: inputs.action == 'start' || inputs.action == 'stop' || inputs.action == 'status'
-        env:
-          ENV: ${{ inputs.environment }}
-          AWS_REGION: ${{ env.AWS_REGION }}
-        run: |
-          set -e
-          DB_ID="tx01-db-${ENV}"
-          echo "Managing RDS instance: $DB_ID"
-
-          if [ "${{ inputs.action }}" = "start" ]; then
-            echo "Starting RDS..."
-            aws rds start-db-instance --db-instance-identifier "$DB_ID" --region "$AWS_REGION" >/dev/null 2>&1 || true
-            echo "Waiting for RDS to become 'available'..."
-            END=$(( $(date +%s) + 900 ))
-            while [ $(date +%s) -lt $END ]; do
-              ST=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --region "$AWS_REGION" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo unknown)
-              echo "RDS status: $ST"
-              [ "$ST" = "available" ] && break
-              sleep 20
-            done
-          elif [ "${{ inputs.action }}" = "stop" ]; then
-            echo "Stopping RDS..."
-            aws rds stop-db-instance --db-instance-identifier "$DB_ID" --region "$AWS_REGION" >/dev/null 2>&1 || true
-            echo "Waiting for RDS to become 'stopped'..."
-            END=$(( $(date +%s) + 900 ))
-            while [ $(date +%s) -lt $END ]; do
-              ST=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --region "$AWS_REGION" --query 'DBInstances[0].DBInstanceStatus' --output text 2>/dev/null || echo unknown)
-              echo "RDS status: $ST"
-              [ "$ST" = "stopped" ] && break
-              sleep 20
-            done
-          fi
-
-          CURRENT=$(aws rds describe-db-instances --db-instance-identifier "$DB_ID" --region "$AWS_REGION" --query 'DBInstances[0].{Status:DBInstanceStatus,Endpoint:Endpoint.Address,Class:DBInstanceClass,Engine:Engine}' --output json 2>/dev/null || echo '{}')
-          {
-            echo "## 🗄️ RDS (${ENV})";
-            echo "```${CURRENT}```";
-          } >> $GITHUB_STEP_SUMMARY
-
-      - name: ▶️ Start EC2 (power on)
+      - name: ▶️ Start EC2 Instances
         if: inputs.action == 'start' && steps.get-instances.outputs.instances != ''
         run: |
-          echo "Starting EC2 instances: ${{ steps.get-instances.outputs.instances }}"
-          aws ec2 start-instances --instance-ids ${{ steps.get-instances.outputs.instances }} --region ${{ env.AWS_REGION }} >/dev/null
-          echo "Waiting for instances to be running..."
-          aws ec2 wait instance-running --instance-ids ${{ steps.get-instances.outputs.instances }} --region ${{ env.AWS_REGION }}
+          aws ec2 start-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "⏳ Waiting for instances to start..."
+          aws ec2 wait instance-running --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "✅ All instances are now running!"
 
-      - name: 🔁 Register EC2 in Target Group
-        if: inputs.action == 'start' && steps.get-instances.outputs.instances != ''
+      - name: ⏸️ Stop EC2 Instances
+        if: inputs.action == 'stop' && steps.get-instances.outputs.instances != ''
         run: |
-          set -e
-          echo "Registering instances to ALB target group (robust flow)..."
-          TG_NAME="tx01-tg-${{ inputs.environment }}"
-          TG_ARN=$(aws elbv2 describe-target-groups --names "$TG_NAME" --region ${{ env.AWS_REGION }} --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
-          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
-            echo "Target group $TG_NAME not found by name. Searching by environment..."
-            TG_ARN=$(aws elbv2 describe-target-groups --region ${{ env.AWS_REGION }} --query "TargetGroups[?contains(@.TargetGroupName, '${{ inputs.environment }}')].TargetGroupArn | [0]" --output text 2>/dev/null || true)
-          fi
+          aws ec2 stop-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "⏳ Waiting for instances to stop..."
+          aws ec2 wait instance-stopped --instance-ids ${{ steps.get-instances.outputs.instances }}
+          echo "✅ All instances are now stopped!"
 
-          if [ -z "$TG_ARN" ] || [ "$TG_ARN" = "None" ]; then
-            echo "⚠️ Could not find target group ARN for environment: ${{ inputs.environment }}"
-            exit 0
-          fi
-
-          echo "Found Target Group ARN: $TG_ARN"
-
-          # Show current targets
-          echo "Current targets before change:"
-          aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --output table || true
-
-          # Attempt to deregister any existing targets for a clean replacement
-          EXISTING_IDS=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --query 'TargetHealthDescriptions[].Target.Id' --output text || true)
-          if [ -n "$EXISTING_IDS" ]; then
-            echo "Deregistering existing targets: $EXISTING_IDS"
-            for old in $EXISTING_IDS; do
-              aws elbv2 deregister-targets --target-group-arn "$TG_ARN" --targets Id=$old --region ${{ env.AWS_REGION }} || echo "warn: failed to deregister $old"
-            done
-          fi
-
-          # Register desired instances
-          echo "Registering new instances: ${{ steps.get-instances.outputs.instances }}"
-          for id in ${{ steps.get-instances.outputs.instances }}; do
-            echo "Registering instance $id"
-            aws elbv2 register-targets --target-group-arn "$TG_ARN" --targets Id=$id --region ${{ env.AWS_REGION }} || echo "warn: failed to register $id"
-          done
-
-          # Wait for targets to become healthy (timeout 180s)
-          echo "Waiting for targets to become healthy (timeout 180s)"
-          DEADLINE=$(( $(date +%s) + 180 ))
-          while [ $(date +%s) -lt $DEADLINE ]; do
-            STATES=$(aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --query 'TargetHealthDescriptions[].TargetHealth.State' --output text || true)
-            echo "Current states: $STATES"
-            if [ -n "$STATES" ]; then
-              all_healthy=true
-              for s in $STATES; do
-                if [ "$s" != "healthy" ]; then
-                  all_healthy=false
-                  break
-                fi
-              done
-              if [ "$all_healthy" = true ]; then
-                echo "✅ All targets healthy"
-                break
-              fi
-            fi
-            sleep 10
-          done
-
-          echo "Final target health:" 
-          aws elbv2 describe-target-health --target-group-arn "$TG_ARN" --region ${{ env.AWS_REGION }} --output table || true
+      - name: 📊 Check Status
+        if: steps.get-instances.outputs.instances != ''
+        run: |
+          echo "## 📊 Environment Status: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           aws ec2 describe-instances \
             --instance-ids ${{ steps.get-instances.outputs.instances }} \
             --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,InstanceType,State.Name,PublicIpAddress]' \
             --output table >> $GITHUB_STEP_SUMMARY
-
-      - name: ⏹️ Stop EC2 Instances
-        if: inputs.action == 'stop' && steps.get-instances.outputs.instances != ''
-        run: |
-          set -e
-          echo "Deregistering instances from ALB target group and stopping EC2..."
-          TG_NAME="tx01-tg-${{ inputs.environment }}"
-          TG_ARN=$(aws elbv2 describe-target-groups --names "$TG_NAME" --region ${{ env.AWS_REGION }} --query 'TargetGroups[0].TargetGroupArn' --output text 2>/dev/null || true)
-          if [ -n "$TG_ARN" ] && [ "$TG_ARN" != "None" ]; then
-            for id in ${{ steps.get-instances.outputs.instances }}; do
-              aws elbv2 deregister-targets --target-group-arn "$TG_ARN" --targets Id=$id --region ${{ env.AWS_REGION }} || true
-            done
-          fi
-          aws ec2 stop-instances --instance-ids ${{ steps.get-instances.outputs.instances }} --region ${{ env.AWS_REGION }} >/dev/null || true
-          echo "Waiting for instances to stop..."
-          aws ec2 wait instance-stopped --instance-ids ${{ steps.get-instances.outputs.instances }} --region ${{ env.AWS_REGION }} || true
-          echo "EC2 stopped."
 
       - name: 💰 Cost Estimate
         if: inputs.action == 'status' || inputs.action == 'start' || inputs.action == 'stop'
