@@ -1,4 +1,4 @@
-﻿# EKS Cluster
+# EKS Cluster
 resource "aws_eks_cluster" "main" {
   count = var.enable_eks ? 1 : 0
   
