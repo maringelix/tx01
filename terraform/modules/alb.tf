@@ -50,7 +50,7 @@ resource "aws_lb_target_group_attachment" "main" {
   count            = var.instance_count
   target_group_arn = aws_lb_target_group.main.arn
   target_id        = aws_instance.web[count.index].id
-  port             = 80
+  port             = 8080
 }
 
 # ALB Listener (HTTP)
