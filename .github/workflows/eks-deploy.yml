@@ -59,7 +59,6 @@ jobs:
       run: |
         # Plan only EKS-related resources using targeted plan
         terraform plan \
-          -var="enable_eks=true" \
           -target=module.infrastructure.aws_iam_role.eks_cluster \
           -target=module.infrastructure.aws_iam_role.eks_node \
           -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
@@ -110,7 +109,6 @@ jobs:
       run: |
         # Apply only EKS-related resources using targeted apply
         terraform apply -auto-approve \
-          -var="enable_eks=true" \
           -target=module.infrastructure.aws_iam_role.eks_cluster \
           -target=module.infrastructure.aws_iam_role.eks_node \
           -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
