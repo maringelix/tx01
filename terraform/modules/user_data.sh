@@ -5,6 +5,11 @@ set -e
 apt-get update
 apt-get upgrade -y
 
+# Install SSM Agent (para Ubuntu 22.04)
+snap install amazon-ssm-agent --classic
+systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+
 # Install Docker
 apt-get install -y \
     apt-transport-https \
