@@ -133,9 +133,16 @@ jobs:
     - name: Get EKS cluster info
       id: eks-info
       run: |
-        CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text)
+        # Wait a few seconds for cluster to be fully registered
+        sleep 10
+        
+        CLUSTER_NAME="tx01-eks-${{ inputs.environment }}"
         echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
 
+        # Wait for cluster to be ACTIVE
+        echo "Waiting for cluster to be ACTIVE..."
+        aws eks wait cluster-active --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
+        
         CLUSTER_ENDPOINT=$(aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} --query 'cluster.endpoint' --output text)
         echo "cluster_endpoint=$CLUSTER_ENDPOINT" >> $GITHUB_OUTPUT
 
