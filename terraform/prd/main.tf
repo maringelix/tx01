@@ -33,6 +33,6 @@ module "infrastructure" {
   aws_region            = var.aws_region
   docker_image_tag      = var.docker_image_tag
   enable_waf            = var.enable_waf
-  enable_eks            = false
+  enable_eks            = var.enable_eks
   tags                  = var.tags
 }
