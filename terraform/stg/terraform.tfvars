@@ -9,7 +9,7 @@ docker_image_tag   = "latest"
 enable_waf         = true
 
 # EKS Configuration
-enable_eks              = false  # Set to true when ready to provision EKS
+enable_eks              = true  # Set to false to disable EKS
 eks_node_instance_type  = "t3.medium"  # Minimum recommended for EKS nodes
 eks_node_desired_size   = 2
 eks_node_min_size       = 1
