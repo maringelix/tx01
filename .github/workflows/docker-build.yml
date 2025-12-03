@@ -50,6 +50,39 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           cd docker
+          # Build image
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          
+          # Push both tags
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          echo "✅ Images pushed:"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+
+      - name: 🔄 Trigger EC2 update (optional)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          echo "📢 New image available with tag: latest"
+          echo "EC2 instances will pull on next check or manual restart"
+          
+          # List EC2 instances that need update
+          INSTANCES=$(aws ec2 describe-instances \
+            --region $AWS_REGION \
+            --filters "Name=tag:Project,Values=tx01" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Name`].Value|[0]]' \
+            --output text)
+          
+          if [ -n "$INSTANCES" ]; then
+            echo "🎯 Running instances that can be updated:"
+            echo "$INSTANCES"
+            echo ""
+            echo "💡 To update containers, run:"
+            echo "   aws ssm send-command --instance-ids <ID> --document-name 'AWS-RunShellScript' --parameters 'commands=[\"docker pull \$(aws ecr describe-repositories --repository-names tx01-nginx --query repositories[0].repositoryUri --output text):latest && docker restart tx01-nginx\"]'"
+          else
+            echo "ℹ️ No running EC2 instances found"
+          fi
