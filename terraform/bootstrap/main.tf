@@ -1,3 +1,13 @@
+terraform {
+  required_version = ">= 1.0"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 provider "aws" {
   region = var.region
 }
@@ -5,7 +15,6 @@ provider "aws" {
 # S3 bucket for Terraform state
 resource "aws_s3_bucket" "tf_state" {
   bucket = var.bucket_name
-  acl    = "private"
 
   force_destroy = var.force_destroy
 
