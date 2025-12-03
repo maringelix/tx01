@@ -57,26 +57,8 @@ jobs:
     - name: Terraform Plan (EKS Resources Only)
       working-directory: terraform/${{ inputs.environment }}
       run: |
-        # Plan only EKS-related resources using targeted plan
-        terraform plan \
-          -target=module.infrastructure.aws_iam_role.eks_cluster \
-          -target=module.infrastructure.aws_iam_role.eks_node \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_node_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
-          -target=module.infrastructure.aws_security_group.eks_cluster \
-          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
-          -target=module.infrastructure.aws_eks_cluster.main \
-          -target=module.infrastructure.aws_eks_node_group.main \
-          -target=module.infrastructure.aws_eks_addon.vpc_cni \
-          -target=module.infrastructure.aws_eks_addon.kube_proxy \
-          -target=module.infrastructure.aws_eks_addon.coredns \
-          -target=module.infrastructure.data.tls_certificate.eks \
-          -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
-          -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
-          -target=module.infrastructure.aws_iam_policy.aws_load_balancer_controller \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller
+        # Plan all resources - enable_eks controls what gets created
+        terraform plan
 
   eks-provision:
     if: inputs.action == 'provision'
@@ -107,26 +89,8 @@ jobs:
     - name: Terraform Apply (EKS Resources Only)
       working-directory: terraform/${{ inputs.environment }}
       run: |
-        # Apply only EKS-related resources using targeted apply
-        terraform apply -auto-approve \
-          -target=module.infrastructure.aws_iam_role.eks_cluster \
-          -target=module.infrastructure.aws_iam_role.eks_node \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_node_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
-          -target=module.infrastructure.aws_security_group.eks_cluster \
-          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
-          -target=module.infrastructure.aws_eks_cluster.main \
-          -target=module.infrastructure.aws_eks_node_group.main \
-          -target=module.infrastructure.aws_eks_addon.vpc_cni \
-          -target=module.infrastructure.aws_eks_addon.kube_proxy \
-          -target=module.infrastructure.aws_eks_addon.coredns \
-          -target=module.infrastructure.data.tls_certificate.eks \
-          -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
-          -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
-          -target=module.infrastructure.aws_iam_policy.aws_load_balancer_controller \
-          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller
+        # Apply all resources - enable_eks controls what gets created
+        terraform apply -auto-approve
 
     - name: Get EKS cluster info
       id: eks-info
