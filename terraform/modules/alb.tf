@@ -18,7 +18,7 @@ resource "aws_lb" "main" {
 # Target Group
 resource "aws_lb_target_group" "main" {
   name        = "${var.project_name}-tg-${var.environment}"
-  port        = 80
+  port        = 8080
   protocol    = "HTTP"
   vpc_id      = aws_vpc.main.id
   target_type = "instance"
@@ -28,7 +28,7 @@ resource "aws_lb_target_group" "main" {
     unhealthy_threshold = 2
     timeout             = 3
     interval            = 30
-    path                = "/health"
+    path                = "/"
     matcher             = "200"
   }
 
