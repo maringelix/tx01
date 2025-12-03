@@ -40,11 +40,19 @@ resource "aws_security_group" "ec2" {
   vpc_id      = aws_vpc.main.id
 
   ingress {
+    from_port       = 8080
+    to_port         = 8080
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+    description     = "Allow traffic from ALB to DX01 app"
+  }
+
+  ingress {
     from_port       = 80
     to_port         = 80
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
-    description     = "Allow HTTP from ALB"
+    description     = "Allow HTTP from ALB (legacy nginx)"
   }
 
   ingress {
