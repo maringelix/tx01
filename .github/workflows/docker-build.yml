@@ -54,13 +54,22 @@ jobs:
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           
-          # Push both tags
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # Push SHA tag (ignore if already exists due to immutability)
+          if docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG 2>&1 | tee /tmp/push-sha.log; then
+            echo "✅ SHA tag pushed: $IMAGE_TAG"
+          else
+            if grep -q "tag is immutable" /tmp/push-sha.log; then
+              echo "ℹ️ SHA tag already exists (immutable), skipping"
+            else
+              echo "❌ Failed to push SHA tag"
+              exit 1
+            fi
+          fi
+          
+          # Push latest tag (always succeeds as it's mutable)
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           
-          echo "✅ Images pushed:"
-          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
-          echo "  - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "✅ Latest image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:latest"
 
       - name: 🔄 Trigger EC2 update (optional)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
