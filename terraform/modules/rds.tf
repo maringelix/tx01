@@ -131,15 +131,8 @@ resource "aws_db_instance" "main" {
 
 # DB Parameter Group for PostgreSQL optimization
 
-# CloudWatch Log Group for RDS logs
-resource "aws_cloudwatch_log_group" "rds" {
-  name              = "/aws/rds/instance/${var.project_name}-db-${var.environment}/postgresql"
-  retention_in_days = var.environment == "prd" ? 30 : 7
-
-  tags = {
-    Name = "${var.project_name}-rds-logs-${var.environment}"
-  }
-}
+# CloudWatch Log Group for RDS is created automatically by AWS
+# when enabled_cloudwatch_logs_exports is set
 
 # Outputs
 output "db_instance_endpoint" {
