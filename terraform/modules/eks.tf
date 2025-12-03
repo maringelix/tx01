@@ -4,7 +4,7 @@ resource "aws_eks_cluster" "main" {
   
   name     = "${var.project_name}-eks-${var.environment}"
   role_arn = aws_iam_role.eks_cluster[0].arn
-  version  = "1.31"
+  version  = "1.32"
 
   vpc_config {
     subnet_ids              = aws_subnet.private[*].id
@@ -68,6 +68,55 @@ resource "aws_eks_node_group" "main" {
       Name = "${var.project_name}-ng-${var.environment}"
     }
   )
+}
+
+# EKS Add-ons
+resource "aws_eks_addon" "vpc_cni" {
+  count = var.enable_eks ? 1 : 0
+  
+  cluster_name             = aws_eks_cluster.main[0].name
+  addon_name               = "vpc-cni"
+  addon_version            = "v1.19.0-eksbuild.1"  # Compatible with K8s 1.32
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  depends_on = [
+    aws_eks_node_group.main
+  ]
+
+  tags = var.tags
+}
+
+resource "aws_eks_addon" "kube_proxy" {
+  count = var.enable_eks ? 1 : 0
+  
+  cluster_name             = aws_eks_cluster.main[0].name
+  addon_name               = "kube-proxy"
+  addon_version            = "v1.32.0-eksbuild.2"  # Match K8s version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  depends_on = [
+    aws_eks_node_group.main
+  ]
+
+  tags = var.tags
+}
+
+resource "aws_eks_addon" "coredns" {
+  count = var.enable_eks ? 1 : 0
+  
+  cluster_name             = aws_eks_cluster.main[0].name
+  addon_name               = "coredns"
+  addon_version            = "v1.11.3-eksbuild.2"  # Compatible with K8s 1.32
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  depends_on = [
+    aws_eks_node_group.main
+  ]
+
+  tags = var.tags
 }
 
 # IAM Role for EKS Cluster

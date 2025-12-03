@@ -16,6 +16,7 @@ on:
         required: true
         type: choice
         options:
+          - plan
           - provision
           - deploy
           - destroy
@@ -24,9 +25,60 @@ on:
 env:
   AWS_REGION: us-east-1
   TERRAFORM_VERSION: 1.6.0
-  KUBECTL_VERSION: 1.28.0
+  KUBECTL_VERSION: 1.32.0
 
 jobs:
+  eks-plan:
+    if: inputs.action == 'plan'
+    name: Terraform Plan (EKS Resources)
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+    - name: Terraform Init
+      working-directory: terraform/${{ inputs.environment }}
+      run: terraform init
+
+    - name: Terraform Plan (EKS Resources Only)
+      working-directory: terraform/${{ inputs.environment }}
+      run: |
+        # Plan only EKS-related resources using targeted plan
+        terraform plan \
+          -var="enable_eks=true" \
+          -target=module.infrastructure.aws_iam_role.eks_cluster \
+          -target=module.infrastructure.aws_iam_role.eks_node \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cluster_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_node_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_cni_policy \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.eks_container_registry_policy \
+          -target=module.infrastructure.aws_security_group.eks_cluster \
+          -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
+          -target=module.infrastructure.aws_eks_cluster.main \
+          -target=module.infrastructure.aws_eks_node_group.main \
+          -target=module.infrastructure.aws_eks_addon.vpc_cni \
+          -target=module.infrastructure.aws_eks_addon.kube_proxy \
+          -target=module.infrastructure.aws_eks_addon.coredns \
+          -target=module.infrastructure.data.tls_certificate.eks \
+          -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
+          -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
+          -target=module.infrastructure.aws_iam_policy.aws_load_balancer_controller \
+          -target=module.infrastructure.aws_iam_role_policy_attachment.aws_load_balancer_controller
+
   eks-provision:
     if: inputs.action == 'provision'
     name: Provision EKS Cluster
@@ -69,6 +121,9 @@ jobs:
           -target=module.infrastructure.aws_cloudwatch_log_group.eks_cluster \
           -target=module.infrastructure.aws_eks_cluster.main \
           -target=module.infrastructure.aws_eks_node_group.main \
+          -target=module.infrastructure.aws_eks_addon.vpc_cni \
+          -target=module.infrastructure.aws_eks_addon.kube_proxy \
+          -target=module.infrastructure.aws_eks_addon.coredns \
           -target=module.infrastructure.data.tls_certificate.eks \
           -target=module.infrastructure.aws_iam_openid_connect_provider.eks \
           -target=module.infrastructure.aws_iam_role.aws_load_balancer_controller \
@@ -102,8 +157,9 @@ jobs:
         # Get IAM role ARN
         ROLE_ARN=$(aws iam get-role --role-name tx01-alb-controller-${{ inputs.environment }} --query 'Role.Arn' --output text)
 
-        # Install controller
+        # Install controller with version compatible with Kubernetes 1.32
         helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
+          --version 1.10.1 \
           --namespace kube-system \
           --set clusterName=${{ steps.eks-info.outputs.cluster_name }} \
           --set serviceAccount.create=true \
@@ -382,6 +438,9 @@ jobs:
         # Destroy only EKS-related resources without affecting EC2
         terraform destroy -auto-approve \
           -target=module.infrastructure.kubernetes_config_map_v1_data.aws_auth \
+          -target=module.infrastructure.aws_eks_addon.coredns \
+          -target=module.infrastructure.aws_eks_addon.kube_proxy \
+          -target=module.infrastructure.aws_eks_addon.vpc_cni \
           -target=module.infrastructure.aws_eks_node_group.main \
           -target=module.infrastructure.aws_eks_cluster.main \
           -target=module.infrastructure.aws_iam_role.eks_cluster \

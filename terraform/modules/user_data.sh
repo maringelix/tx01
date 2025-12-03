@@ -43,31 +43,34 @@ rm -rf aws awscliv2.zip
 aws ecr get-login-password --region ${aws_region} | docker login --username AWS --password-stdin ${ecr_registry}
 
 # Pull and run container (with retry logic)
-MAX_RETRIES=5
-RETRY_COUNT=0
-IMAGE_PULLED=false
-
-while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$IMAGE_PULLED" = false ]; do
-  if docker pull ${ecr_registry}/${docker_image}; then
-    IMAGE_PULLED=true
-    echo "✅ Image pulled successfully" | tee -a /var/log/container-startup.log
-  else
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "⚠️ Image pull attempt $RETRY_COUNT failed. Retrying in 30s..." | tee -a /var/log/container-startup.log
-    sleep 30
-  fi
-done
-
-if [ "$IMAGE_PULLED" = true ]; then
-  docker run -d \
-    --name tx01-nginx \
-    --restart unless-stopped \
-    -p 80:80 \
-    ${ecr_registry}/${docker_image}
-  
-  # Health check
-  sleep 10
-  if curl -f http://localhost:80/health > /dev/null 2>&1; then
+# DISABLED: DX01 app is now deployed via GitHub Actions workflow
+# The tx01-nginx container is no longer needed as we use dx01-app on port 8080
+#
+# MAX_RETRIES=5
+# RETRY_COUNT=0
+# IMAGE_PULLED=false
+# 
+# while [ $RETRY_COUNT -lt $MAX_RETRIES ] && [ "$IMAGE_PULLED" = false ]; do
+#   if docker pull ${ecr_registry}/${docker_image}; then
+#     IMAGE_PULLED=true
+#     echo "✅ Image pulled successfully" | tee -a /var/log/container-startup.log
+#   else
+#     RETRY_COUNT=$((RETRY_COUNT + 1))
+#     echo "⚠️ Image pull attempt $RETRY_COUNT failed. Retrying in 30s..." | tee -a /var/log/container-startup.log
+#     sleep 30
+#   fi
+# done
+# 
+# if [ "$IMAGE_PULLED" = true ]; then
+#   docker run -d \
+#     --name tx01-nginx \
+#     --restart unless-stopped \
+#     -p 80:80 \
+#     ${ecr_registry}/${docker_image}
+#   
+#   # Health check
+#   sleep 10
+#   if curl -f http://localhost:80/health > /dev/null 2>&1; then
     echo "✅ Container healthy" | tee -a /var/log/container-startup.log
   else
     echo "⚠️ Container not responding" | tee -a /var/log/container-startup.log
