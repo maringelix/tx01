@@ -20,14 +20,19 @@ terraform {
 module "infrastructure" {
   source = "../modules"
   
-  project_name          = "tx01"
-  environment           = "prd"
-  vpc_cidr              = "10.1.0.0/16"
+  project_name          = var.project_name
+  environment           = var.environment
+  vpc_cidr              = var.vpc_cidr
   availability_zones    = ["us-east-1a", "us-east-1b"]
   public_subnet_cidrs   = ["10.1.1.0/24", "10.1.2.0/24"]
   private_subnet_cidrs  = ["10.1.11.0/24", "10.1.12.0/24"]
-  instance_type         = "t3.small"
+  instance_type         = var.instance_type
   ami_id                = "ami-0c02fb55b34e3cf00" # Amazon Linux 2023
   waf_ip_whitelist      = []
-  instance_count        = 3
+  instance_count        = var.instance_count
+  aws_region            = var.aws_region
+  docker_image_tag      = var.docker_image_tag
+  enable_waf            = var.enable_waf
+  enable_eks            = false
+  tags                  = var.tags
 }

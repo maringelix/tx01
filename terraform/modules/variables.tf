@@ -81,6 +81,12 @@ variable "tags" {
   default     = {}
 }
 
+variable "enable_waf" {
+  description = "Enable WAF on ALB"
+  type        = bool
+  default     = true
+}
+
 # EKS Variables
 variable "enable_eks" {
   description = "Enable EKS cluster creation"
