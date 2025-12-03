@@ -18,6 +18,7 @@ spec:
         environment: ${ENVIRONMENT}
     spec:
       serviceAccountName: tx01-service-account
+      automountServiceAccountToken: true
       imagePullSecrets:
         - name: ecr-registry-secret
       containers:

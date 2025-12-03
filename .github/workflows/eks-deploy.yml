@@ -144,6 +144,16 @@ jobs:
           --selector=app.kubernetes.io/name=aws-load-balancer-controller \
           --timeout=180s
 
+    - name: Install Metrics Server
+      run: |
+        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+        
+        # Wait for metrics server to be ready
+        kubectl wait --namespace kube-system \
+          --for=condition=ready pod \
+          --selector=k8s-app=metrics-server \
+          --timeout=120s
+
     outputs:
       cluster_name: ${{ steps.eks-info.outputs.cluster_name }}
       cluster_endpoint: ${{ steps.eks-info.outputs.cluster_endpoint }}
@@ -256,15 +266,8 @@ jobs:
 
     - name: Deploy Service Account
       run: |
-        # Get IRSA role ARN (se existir)
-        IRSA_ROLE_ARN=$(aws iam list-roles --query "Roles[?RoleName=='tx01-eks-pod-role-${{ inputs.environment }}'].Arn" --output text || echo "")
-        export IRSA_ROLE_ARN="${IRSA_ROLE_ARN}"
-
-        if [ -n "$IRSA_ROLE_ARN" ]; then
-          envsubst < k8s/serviceaccount.yaml | kubectl apply -f -
-        else
-          echo "No IRSA role found, skipping service account with role annotation"
-        fi
+        # Create service account without IRSA role for now
+        kubectl create serviceaccount tx01-service-account --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Deploy application
       run: |
