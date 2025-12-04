@@ -55,7 +55,7 @@ jobs:
           echo "📊 Checking current EKS node group configuration..."
           aws eks describe-nodegroup \
             --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-            --nodegroup-name tx01-eks-${{ github.event.inputs.environment }}-node-group \
+            --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
             --region ${{ env.AWS_REGION }} \
             --query 'nodegroup.{InstanceType:instanceTypes[0],DesiredSize:scalingConfig.desiredSize,MinSize:scalingConfig.minSize,MaxSize:scalingConfig.maxSize}' \
             --output table
@@ -102,7 +102,7 @@ jobs:
           while [ $ELAPSED -lt $MAX_WAIT ]; do
             STATUS=$(aws eks describe-nodegroup \
               --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-              --nodegroup-name tx01-eks-${{ github.event.inputs.environment }}-node-group \
+              --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
               --region ${{ env.AWS_REGION }} \
               --query 'nodegroup.status' \
               --output text)
