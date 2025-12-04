@@ -6,15 +6,13 @@ Este guia explica como alternar entre os modos EC2 e EKS no ambiente tx01.
 
 ---
 
-## ⚠️ **IMPORTANTE - Use o Workflow V2**
+## ⚠️ **IMPORTANTE**
 
-Existem 2 workflows disponíveis:
-- ❌ **switch-environment.yml** (v1) - OBSOLETO - tenta gerenciar ALB manualmente
-- ✅ **switch-environment-v2.yml** (v2) - RECOMENDADO - deixa o Ingress Controller trabalhar
+Use o workflow `switch-environment.yml` para alternar entre os modos.
 
-**Use sempre o V2!**
+**URL:** https://github.com/maringelix/tx01/actions/workflows/switch-environment.yml
 
-URL: https://github.com/maringelix/tx01/actions/workflows/switch-environment-v2.yml
+Este workflow foi atualizado para deixar o Ingress Controller gerenciar o ALB automaticamente.
 
 ---
 
