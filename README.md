@@ -495,9 +495,15 @@ Actions:
   - uninstall: Remove stack, preserva dados (~1-2 min)
 ```
 
+**⚠️ Pré-requisito obrigatório:**
+Configure o secret `GRAFANA_PASSWORD` no GitHub antes de executar:
+1. Acesse: `Settings > Secrets and variables > Actions`
+2. Crie `GRAFANA_PASSWORD` com senha forte (min 8 chars)
+3. O workflow validará antes de instalar
+
 **Stack instalado:**
 - ✅ Prometheus (métricas, 7d retention, 10Gi)
-- ✅ Grafana (dashboards, 5Gi storage)
+- ✅ Grafana (dashboards, 5Gi storage) 🔐 Senha configurada via secret
 - ✅ Loki (logs, 7d retention, 10Gi)
 - ✅ Promtail (coleta de logs)
 - ✅ AlertManager (15+ alertas críticos)
@@ -506,7 +512,7 @@ Actions:
 - URL do Grafana LoadBalancer
 - Status dos pods
 - Comandos para port-forward
-- Credenciais de acesso
+- Credenciais: `admin` / `<seu GRAFANA_PASSWORD>`
 
 **Quando usar:**
 - Após criar cluster EKS

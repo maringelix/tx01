@@ -23,8 +23,17 @@ Configure these in `Settings > Secrets and variables > Actions`:
 ```
 AWS_ACCESS_KEY_ID       - Your AWS access key
 AWS_SECRET_ACCESS_KEY   - Your AWS secret key
-GRAFANA_PASSWORD        - (Optional) Custom Grafana admin password
+GRAFANA_PASSWORD        - (REQUIRED) Grafana admin password (min 8 chars, use strong password for production)
 ```
+
+**To configure GRAFANA_PASSWORD:**
+1. Go to: https://github.com/maringelix/tx01/settings/secrets/actions
+2. Click "New repository secret"
+3. Name: `GRAFANA_PASSWORD`
+4. Value: Your strong password (min 8 characters)
+5. Click "Add secret"
+
+⚠️ **Important:** This secret is required for the Observability Stack workflow. The workflow will fail if not configured.
 
 ### AWS Secrets Manager
 Database credentials are automatically managed:
