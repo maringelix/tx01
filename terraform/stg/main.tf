@@ -34,5 +34,12 @@ module "infrastructure" {
   docker_image_tag      = var.docker_image_tag
   enable_waf            = var.enable_waf
   enable_eks            = var.enable_eks
+  
+  # EKS Configuration
+  eks_node_instance_type = var.eks_node_instance_type
+  eks_node_desired_size  = var.eks_node_desired_size
+  eks_node_min_size      = var.eks_node_min_size
+  eks_node_max_size      = var.eks_node_max_size
+  
   tags                  = var.tags
 }
