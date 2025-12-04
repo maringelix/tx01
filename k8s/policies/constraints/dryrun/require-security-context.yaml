@@ -1,0 +1,15 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireSecurityContext
+metadata:
+  name: require-security-context-dryrun
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - default
+      - tx01-app

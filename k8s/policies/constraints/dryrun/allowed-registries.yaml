@@ -1,0 +1,21 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sAllowedRegistries
+metadata:
+  name: allowed-registries-only-dryrun
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - default
+      - tx01-app
+  parameters:
+    registries:
+      - "894222083614.dkr.ecr.us-east-1.amazonaws.com/"  # Your ECR
+      - "docker.io/library/"                              # Official Docker images
+      - "quay.io/"                                        # Quay.io
+      - "ghcr.io/"                                        # GitHub Container Registry

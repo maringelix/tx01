@@ -1,0 +1,23 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: must-have-labels-dryrun
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+      - apiGroups: [""]
+        kinds: ["Pod", "Service"]
+    namespaces:
+      - default
+      - tx01-app
+  parameters:
+    labels:
+      - key: "app"
+        allowedRegex: "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+      - key: "environment"
+        allowedRegex: "^(stg|prd|dev)$"
+      - key: "managed-by"
+        allowedRegex: "^(terraform|helm|kubectl)$"

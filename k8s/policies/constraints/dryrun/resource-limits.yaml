@@ -1,0 +1,20 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredResourceLimits
+metadata:
+  name: must-have-resource-limits-dryrun
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet", "DaemonSet"]
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces:
+      - default
+      - tx01-app
+  parameters:
+    exemptNamespaces:
+      - kube-system
+      - gatekeeper-system
+      - monitoring

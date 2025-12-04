@@ -1,0 +1,17 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireProbes
+metadata:
+  name: must-have-probes-dryrun
+spec:
+  enforcementAction: dryrun
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet"]
+    namespaces:
+      - default
+      - tx01-app
+  parameters:
+    probes:
+      - readinessProbe
+      - livenessProbe

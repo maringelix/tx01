@@ -1,0 +1,91 @@
+# ❌ This deployment will violate multiple OPA Gatekeeper policies
+# Use this to test policy enforcement
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-policy-violation
+  namespace: default
+  # ❌ Missing required labels: app, environment, managed-by
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test
+  template:
+    metadata:
+      labels:
+        app: test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:latest  # ❌ Not from allowed registry
+        # ❌ Missing: resources (limits/requests)
+        # ❌ Missing: livenessProbe and readinessProbe
+        # ❌ Missing: securityContext (runAsNonRoot, readOnlyRootFilesystem)
+        ports:
+        - containerPort: 80
+
+---
+# ✅ This deployment is compliant with all policies
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-policy-compliant
+  namespace: default
+  labels:
+    app: test-app
+    environment: stg
+    managed-by: kubectl
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: test-app
+  template:
+    metadata:
+      labels:
+        app: test-app
+        environment: stg
+        managed-by: kubectl
+    spec:
+      containers:
+      - name: nginx
+        image: docker.io/library/nginx:alpine  # ✅ Allowed registry
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
+      volumes:
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}

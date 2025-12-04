@@ -1,0 +1,14 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sBlockNodePort
+metadata:
+  name: block-nodeport-services-enforce
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Service"]
+    namespaces:
+      - default
+      - tx01-app
+

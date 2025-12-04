@@ -1,0 +1,258 @@
+name: 🛡️ Deploy OPA Gatekeeper
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - install
+          - upgrade
+          - uninstall
+      enforcement_mode:
+        description: 'Enforcement Mode'
+        required: false
+        type: choice
+        default: 'dryrun'
+        options:
+          - dryrun
+          - enforce
+
+env:
+  AWS_REGION: us-east-1
+  GATEKEEPER_VERSION: v3.15.0
+
+jobs:
+  deploy-gatekeeper:
+    name: 🛡️ ${{ github.event.inputs.action }} OPA Gatekeeper
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: ☸️ Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name tx01-eks-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Kubectl configured"
+          kubectl cluster-info
+      
+      - name: 🎯 Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.13.0'
+      
+      - name: 📦 Add Gatekeeper Helm Repository
+        run: |
+          echo "📦 Adding Gatekeeper Helm repository..."
+          helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+          helm repo update
+          echo "✅ Repository added"
+      
+      - name: 📁 Create Gatekeeper Namespace
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📁 Creating gatekeeper-system namespace..."
+          kubectl create namespace gatekeeper-system --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace ready"
+      
+      - name: 🛡️ Install OPA Gatekeeper
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🛡️ Installing OPA Gatekeeper..."
+          
+          helm upgrade --install gatekeeper gatekeeper/gatekeeper \
+            --namespace gatekeeper-system \
+            --set enableExternalData=false \
+            --set auditInterval=60 \
+            --set constraintViolationsLimit=100 \
+            --set auditFromCache=true \
+            --set replicas=2 \
+            --set revisionHistoryLimit=5 \
+            --set enableGeneratorResourceExpansion=true \
+            --set metrics.enabled=true \
+            --set metrics.prometheusEnabled=true \
+            --wait --timeout=5m
+          
+          echo "✅ Gatekeeper installed"
+      
+      - name: ⏳ Wait for Gatekeeper to be Ready
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "⏳ Waiting for Gatekeeper webhooks to be ready..."
+          sleep 30
+          
+          kubectl wait --for=condition=Available \
+            deployment/gatekeeper-controller-manager \
+            -n gatekeeper-system \
+            --timeout=300s
+          
+          kubectl wait --for=condition=Available \
+            deployment/gatekeeper-audit \
+            -n gatekeeper-system \
+            --timeout=300s
+          
+          echo "✅ Gatekeeper is ready"
+      
+      - name: 📊 Create ServiceMonitor for Prometheus
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📊 Creating ServiceMonitor for Prometheus integration..."
+          
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: gatekeeper-controller-manager-metrics
+            namespace: gatekeeper-system
+            labels:
+              app: gatekeeper
+              release: kube-prometheus-stack
+          spec:
+            ports:
+            - name: metrics
+              port: 8888
+              protocol: TCP
+              targetPort: 8888
+            selector:
+              control-plane: controller-manager
+              gatekeeper.sh/operation: webhook
+          ---
+          apiVersion: monitoring.coreos.com/v1
+          kind: ServiceMonitor
+          metadata:
+            name: gatekeeper-controller-manager
+            namespace: gatekeeper-system
+            labels:
+              app: gatekeeper
+              release: kube-prometheus-stack
+          spec:
+            selector:
+              matchLabels:
+                app: gatekeeper
+            endpoints:
+            - port: metrics
+              interval: 30s
+              path: /metrics
+          EOF
+          
+          echo "✅ ServiceMonitor created - Prometheus will scrape Gatekeeper metrics"
+      
+      - name: 📋 Apply Policy Templates
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📋 Applying OPA policy templates..."
+          
+          if [ -d "k8s/policies/templates" ]; then
+            kubectl apply -f k8s/policies/templates/
+            echo "✅ Policy templates applied"
+          else
+            echo "⚠️ No templates found in k8s/policies/templates/"
+          fi
+      
+      - name: 🔒 Apply Constraints (${{ github.event.inputs.enforcement_mode }} mode)
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🔒 Applying constraints in ${{ github.event.inputs.enforcement_mode }} mode..."
+          
+          CONSTRAINTS_DIR="k8s/policies/constraints/${{ github.event.inputs.enforcement_mode }}"
+          
+          if [ -d "$CONSTRAINTS_DIR" ]; then
+            # Replace enforcement mode in constraints
+            for file in $CONSTRAINTS_DIR/*.yaml; do
+              if [ -f "$file" ]; then
+                sed "s/ENFORCEMENT_MODE/${{ github.event.inputs.enforcement_mode }}/g" "$file" | kubectl apply -f -
+              fi
+            done
+            echo "✅ Constraints applied in ${{ github.event.inputs.enforcement_mode }} mode"
+          else
+            echo "⚠️ No constraints found in $CONSTRAINTS_DIR"
+          fi
+      
+      - name: 🔄 Upgrade Gatekeeper
+        if: github.event.inputs.action == 'upgrade'
+        run: |
+          echo "🔄 Upgrading OPA Gatekeeper..."
+          
+          helm upgrade gatekeeper gatekeeper/gatekeeper \
+            --namespace gatekeeper-system \
+            --reuse-values \
+            --wait --timeout=5m
+          
+          echo "✅ Gatekeeper upgraded"
+      
+      - name: 🗑️ Uninstall Gatekeeper
+        if: github.event.inputs.action == 'uninstall'
+        run: |
+          echo "🗑️ Removing constraints first..."
+          kubectl delete constraints --all -A || echo "No constraints to delete"
+          
+          echo "🗑️ Removing constraint templates..."
+          kubectl delete constrainttemplates --all || echo "No templates to delete"
+          
+          echo "🗑️ Uninstalling Gatekeeper..."
+          helm uninstall gatekeeper -n gatekeeper-system || echo "Already uninstalled"
+          
+          echo "⚠️ Namespace 'gatekeeper-system' preserved"
+          echo "To fully remove: kubectl delete namespace gatekeeper-system"
+          
+          echo "✅ Gatekeeper uninstalled"
+      
+      - name: 📊 Show Status
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🛡️  OPA GATEKEEPER STATUS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          echo "📦 Pods:"
+          kubectl get pods -n gatekeeper-system
+          echo ""
+          
+          echo "📋 Constraint Templates:"
+          kubectl get constrainttemplates
+          echo ""
+          
+          echo "🔒 Constraints:"
+          kubectl get constraints --all-namespaces
+          echo ""
+          
+          echo "📊 Policy Violations (last 10):"
+          kubectl get constraints -A -o json | \
+            jq -r '.items[] | select(.status.totalViolations > 0) | 
+              "❌ \(.metadata.name): \(.status.totalViolations) violations"' | \
+            head -n 10 || echo "No violations found"
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Gatekeeper is running in ${{ github.event.inputs.enforcement_mode }} mode"
+          echo ""
+          echo "📊 View metrics in Grafana:"
+          echo "   • Prometheus target: gatekeeper-controller-manager-metrics:8888"
+          echo "   • Metrics available: gatekeeper_violations, gatekeeper_constraint_templates"
+          echo ""
+          echo "🔍 Check violations:"
+          echo "   kubectl get constraints -A"
+          echo ""
+          echo "💡 To test policies:"
+          echo "   kubectl apply -f k8s/test-policy-violation.yaml"

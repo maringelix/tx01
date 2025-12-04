@@ -1,0 +1,18 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireProbes
+metadata:
+  name: must-have-probes-enforce
+spec:
+  enforcementAction: deny
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "StatefulSet"]
+    namespaces:
+      - default
+      - tx01-app
+  parameters:
+    probes:
+      - readinessProbe
+      - livenessProbe
+
