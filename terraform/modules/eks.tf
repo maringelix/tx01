@@ -174,17 +174,13 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_driver_policy" {
 }
 
 # OIDC Provider for EKS (required for IRSA - IAM Roles for Service Accounts)
-data "tls_certificate" "eks" {
-  count = var.enable_eks ? 1 : 0
-  
-  url = aws_eks_cluster.main[0].identity[0].oidc[0].issuer
-}
-
+# Using fixed thumbprint as recommended by AWS for us-east-1
+# https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc_verify-thumbprint.html
 resource "aws_iam_openid_connect_provider" "eks" {
   count = var.enable_eks ? 1 : 0
   
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks[0].certificates[0].sha1_fingerprint]
+  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]  # Root CA thumbprint for EKS OIDC
   url             = aws_eks_cluster.main[0].identity[0].oidc[0].issuer
 
   tags = merge(
