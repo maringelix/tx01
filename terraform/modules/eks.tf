@@ -56,6 +56,11 @@ resource "aws_eks_node_group" "main" {
     ManagedBy   = "terraform"
   }
 
+  # Force replacement when instance type changes
+  lifecycle {
+    create_before_destroy = true
+  }
+
   depends_on = [
     aws_iam_role_policy_attachment.eks_node_policy,
     aws_iam_role_policy_attachment.eks_cni_policy,
