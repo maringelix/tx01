@@ -96,17 +96,31 @@ jobs:
             tx01-eks-${{ github.event.inputs.environment }}:aws-ebs-csi-driver \
             || echo "⚠️ EBS CSI Driver addon already imported or doesn't exist"
       
-      - name: 🔍 Verify Import
+      - name: 🔍 Debug - Check State Before Verify
         working-directory: terraform/${{ github.event.inputs.environment }}
         run: |
+          echo "🔍 Current state resources:"
+          terraform state list || echo "No resources in state yet"
+          echo ""
+          echo "🔍 Checking if imports were successful:"
+          terraform state show 'module.infrastructure.aws_iam_openid_connect_provider.eks[0]' 2>&1 | head -n 5 || echo "OIDC not in state"
+          terraform state show 'module.infrastructure.aws_iam_role.ebs_csi_driver[0]' 2>&1 | head -n 5 || echo "IAM Role not in state"
+      
+      - name: 🔍 Verify Import
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        continue-on-error: true
+        run: |
           echo "🔍 Running terraform plan to verify..."
-          terraform plan -detailed-exitcode || true
+          terraform plan -no-color 2>&1 || echo "⚠️ Plan had issues, but continuing..."
       
       - name: 📊 Show State
         working-directory: terraform/${{ github.event.inputs.environment }}
         run: |
-          echo "📊 Imported resources:"
-          terraform state list | grep -E "ebs_csi|oidc" || echo "No EBS CSI or OIDC resources found"
+          echo "📊 All resources in state:"
+          terraform state list
+          echo ""
+          echo "📦 EBS CSI and OIDC resources:"
+          terraform state list | grep -E "ebs_csi|oidc" || echo "⚠️ No EBS CSI or OIDC resources found yet"
       
       - name: 🎯 Summary
         run: |
