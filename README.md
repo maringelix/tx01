@@ -22,7 +22,7 @@
 | **Security** | 🟡 C | 2 | Minor issues |
 | **Reliability** | 🟢 A | 3 | Excellent |
 | **Maintainability** | 🟢 A | 18 | Excellent |
-| **Coverage** | ⚪ 0.0% | - | IaC Project |
+| **Coverage** | 🟡 Terraform Tests | - | Infrastructure validation |
 | **Duplications** | 🟢 0.0% | 0 | No duplicates |
 | **Lines of Code** | - | 2,800+ | Terraform, YAML |
 
@@ -431,6 +431,65 @@ kubectl get events --sort-by='.lastTimestamp'
 # Status do ALB Controller
 kubectl logs -n kube-system deployment/aws-load-balancer-controller
 ```
+
+## 🧪 Testing & Validation
+
+### Terraform Tests
+
+```bash
+# Format check
+terraform fmt -check -recursive
+
+# Validate all modules
+cd terraform/modules
+terraform init -backend=false
+terraform validate
+
+# Run infrastructure tests
+cd terraform/tests
+terraform test vpc.tftest.hcl
+terraform test eks.tftest.hcl
+terraform test rds.tftest.hcl
+```
+
+### Test Coverage
+
+- ✅ **VPC Tests**: Network configuration, subnets, routing
+- ✅ **EKS Tests**: Cluster config, node groups, security
+- ✅ **RDS Tests**: Database config, backups, encryption
+- ✅ **CI/CD Tests**: Automated validation on every commit
+
+## 📊 Observability
+
+### Grafana Stack Installation
+
+```bash
+# Quick install
+chmod +x k8s/install-grafana-stack.sh
+./k8s/install-grafana-stack.sh
+
+# Access Grafana
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+# URL: http://localhost:3000 (admin/admin)
+```
+
+### Monitoring Stack
+
+| Component | Purpose | Status |
+|-----------|---------|--------|
+| **Prometheus** | Metrics collection | ✅ |
+| **Grafana** | Dashboards & visualization | ✅ |
+| **Loki** | Log aggregation | ✅ |
+| **AlertManager** | Alert management | ✅ |
+
+### Pre-configured Dashboards
+
+- 📊 Cluster Overview (CPU, RAM, pods, nodes)
+- 🎯 Application Metrics (requests, latency, errors)
+- 💾 Database Monitoring (connections, queries)
+- 🔔 Critical Alerts (downtime, high load)
+
+📚 **Full Guide**: [OBSERVABILITY.md](./OBSERVABILITY.md)
 
 ### **AWS CloudWatch**
 ```bash
