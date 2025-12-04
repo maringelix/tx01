@@ -6,6 +6,31 @@
 [![Terraform](https://img.shields.io/badge/Terraform-1.6.0-purple.svg)](https://www.terraform.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.6-blue.svg)](https://www.postgresql.org/)
 [![GitHub Actions](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-green.svg)](https://github.com/features/actions)
+[![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Passed-brightgreen.svg)](https://sonarcloud.io/)
+[![Security](https://img.shields.io/badge/Security-C%20Rating-yellow.svg)](https://sonarcloud.io/)
+[![Maintainability](https://img.shields.io/badge/Maintainability-A%20Rating-brightgreen.svg)](https://sonarcloud.io/)
+[![Code Lines](https://img.shields.io/badge/Lines%20of%20Code-2.8k-blue.svg)](https://github.com/maringelix/tx01)
+
+---
+
+## 📊 **Code Quality**
+
+<div align="center">
+
+| Metric | Rating | Issues | Status |
+|--------|--------|--------|--------|
+| **Security** | 🟡 C | 2 | Minor issues |
+| **Reliability** | 🟢 A | 3 | Excellent |
+| **Maintainability** | 🟢 A | 18 | Excellent |
+| **Coverage** | ⚪ 0.0% | - | IaC Project |
+| **Duplications** | 🟢 0.0% | 0 | No duplicates |
+| **Lines of Code** | - | 2,800+ | Terraform, YAML |
+
+**Quality Gate:** ✅ **PASSED**
+
+*Analisado com SonarQube - Infrastructure as Code tem cobertura N/A por natureza*
+
+</div>
 
 ---
 
