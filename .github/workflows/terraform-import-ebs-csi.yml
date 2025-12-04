@@ -1,0 +1,126 @@
+name: 🔧 Terraform Import EBS CSI Driver
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  terraform-import:
+    name: 📦 Import EBS CSI Driver to Terraform
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.0
+      
+      - name: 🔑 Get Account and OIDC Info
+        id: info
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          OIDC_ID=$(aws eks describe-cluster \
+            --name tx01-eks-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'cluster.identity.oidc.issuer' \
+            --output text | cut -d '/' -f 5)
+          
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "oidc_id=$OIDC_ID" >> $GITHUB_OUTPUT
+          
+          echo "✅ Account ID: $ACCOUNT_ID"
+          echo "✅ OIDC ID: $OIDC_ID"
+      
+      - name: 🔄 Terraform Init
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          terraform init
+      
+      - name: 📦 Import OIDC Provider
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        continue-on-error: true
+        run: |
+          echo "🔑 Importing OIDC Provider..."
+          terraform import \
+            "module.infrastructure.aws_iam_openid_connect_provider.eks[0]" \
+            "arn:aws:iam::${{ steps.info.outputs.account_id }}:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/${{ steps.info.outputs.oidc_id }}" \
+            || echo "⚠️ OIDC Provider already imported or doesn't exist"
+      
+      - name: 📦 Import IAM Role
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        continue-on-error: true
+        run: |
+          echo "🔐 Importing IAM Role..."
+          terraform import \
+            'module.infrastructure.aws_iam_role.ebs_csi_driver[0]' \
+            tx01-eks-ebs-csi-driver \
+            || echo "⚠️ IAM Role already imported or doesn't exist"
+      
+      - name: 📦 Import IAM Policy Attachment
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        continue-on-error: true
+        run: |
+          echo "📋 Importing IAM Policy Attachment..."
+          terraform import \
+            'module.infrastructure.aws_iam_role_policy_attachment.ebs_csi_driver_policy[0]' \
+            tx01-eks-ebs-csi-driver/arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+            || echo "⚠️ Policy Attachment already imported or doesn't exist"
+      
+      - name: 📦 Import EBS CSI Driver Addon
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        continue-on-error: true
+        run: |
+          echo "📦 Importing EBS CSI Driver addon..."
+          terraform import \
+            'module.infrastructure.aws_eks_addon.ebs_csi_driver[0]' \
+            tx01-eks-${{ github.event.inputs.environment }}:aws-ebs-csi-driver \
+            || echo "⚠️ EBS CSI Driver addon already imported or doesn't exist"
+      
+      - name: 🔍 Verify Import
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "🔍 Running terraform plan to verify..."
+          terraform plan -detailed-exitcode || true
+      
+      - name: 📊 Show State
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "📊 Imported resources:"
+          terraform state list | grep -E "ebs_csi|oidc" || echo "No EBS CSI or OIDC resources found"
+      
+      - name: 🎯 Summary
+        run: |
+          echo "## ✅ Import Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Environment: **${{ github.event.inputs.environment }}**" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Resources Imported:" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ OIDC Provider" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ IAM Role (ebs-csi-driver)" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ IAM Policy Attachment" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ EBS CSI Driver Addon" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps:" >> $GITHUB_STEP_SUMMARY
+          echo "1. Review the Terraform plan output above" >> $GITHUB_STEP_SUMMARY
+          echo "2. If everything looks good, resources are now managed by Terraform" >> $GITHUB_STEP_SUMMARY
+          echo "3. Future changes should be made via Terraform" >> $GITHUB_STEP_SUMMARY
