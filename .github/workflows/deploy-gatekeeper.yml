@@ -86,14 +86,17 @@ jobs:
             --set auditInterval=60 \
             --set constraintViolationsLimit=100 \
             --set auditFromCache=true \
-            --set replicas=2 \
+            --set replicas=1 \
             --set revisionHistoryLimit=5 \
             --set enableGeneratorResourceExpansion=true \
             --set metrics.enabled=true \
             --set metrics.prometheusEnabled=true \
-            --wait --timeout=5m
+            --wait --timeout=10m
           
           echo "✅ Gatekeeper installed"
+          
+          echo "📊 Checking pod status..."
+          kubectl get pods -n gatekeeper-system
       
       - name: ⏳ Wait for Gatekeeper to be Ready
         if: github.event.inputs.action == 'install'
