@@ -5,7 +5,9 @@
 [![EKS](https://img.shields.io/badge/EKS-v1.32-blue.svg)](https://aws.amazon.com/eks/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.6.0-purple.svg)](https://www.terraform.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.6-blue.svg)](https://www.postgresql.org/)
-[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-GitHub%20Actions-green.svg)](https://github.com/features/actions)
+[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-8%20Workflows-green.svg)](https://github.com/features/actions)
+[![Prometheus](https://img.shields.io/badge/Prometheus-Latest-orange.svg)](https://prometheus.io/)
+[![Grafana](https://img.shields.io/badge/Grafana-Latest-orange.svg)](https://grafana.com/)
 [![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Passed-brightgreen.svg)](https://sonarcloud.io/)
 [![Security](https://img.shields.io/badge/Security-C%20Rating-yellow.svg)](https://sonarcloud.io/)
 [![Maintainability](https://img.shields.io/badge/Maintainability-A%20Rating-brightgreen.svg)](https://sonarcloud.io/)
@@ -122,10 +124,18 @@ Este projeto demonstra uma arquitetura cloud moderna com:
 - **PostgreSQL Client**: Conexão com RDS via pool
 
 ### **CI/CD**
-- **GitHub Actions**: 5 workflows automatizados
+- **GitHub Actions**: 8 workflows automatizados
 - **AWS CLI v2**: Automação de comandos AWS
 - **kubectl v1.32.0**: Gerenciamento do cluster Kubernetes
 - **Terraform Cloud**: State management remoto
+
+### **Observability**
+- **Prometheus**: Coleta de métricas (application + infrastructure)
+- **Grafana**: Dashboards e visualização
+- **Loki**: Agregação de logs centralizada
+- **Promtail**: Coleta de logs dos pods
+- **AlertManager**: Gerenciamento e roteamento de alertas
+- **15+ Alertas Críticos**: Monitoramento proativo
 
 ## 📁 Estrutura do Projeto
 
@@ -163,24 +173,34 @@ tx01/
 │   ├── ingress.yaml            # ALB Ingress
 │   ├── hpa.yaml                # Horizontal Pod Autoscaler
 │   ├── secret.yaml             # Database credentials
-│   └── serviceaccount.yaml     # IRSA service account
+│   ├── serviceaccount.yaml     # IRSA service account
+│   ├── install-grafana-stack.sh    # Script de instalação do Grafana Stack
+│   └── prometheus-alerts.yaml  # 15+ alertas críticos configurados
 ├── docker/
 │   ├── Dockerfile
 │   ├── nginx.conf
 │   └── default.conf
 ├── .github/workflows/
-│   ├── terraform-bootstrap.yml # Bootstrap S3 backend
-│   ├── tf-deploy.yml           # Deploy EC2 infrastructure
-│   ├── eks-deploy.yml          # Deploy EKS + Kubernetes apps
-│   ├── docker-build.yml        # Build and push to ECR
-│   ├── switch-environment.yml  # Switch between EC2 ↔️ EKS
-│   └── terraform-validate.yml  # Validate Terraform code
+│   ├── tests.yml               # 🧪 Terraform validation tests
+│   ├── terraform-plan.yml      # 📊 Terraform convergence reports
+│   ├── terraform-bootstrap.yml # 🏗️ Bootstrap S3 backend
+│   ├── tf-deploy.yml           # 🚀 Deploy EC2 infrastructure
+│   ├── eks-deploy.yml          # ☸️ Deploy EKS + Kubernetes apps
+│   ├── deploy-observability.yml # 📊 Deploy Grafana Stack
+│   ├── switch-environment.yml  # 🔄 Switch between EC2 ↔️ EKS
+│   ├── docker-build.yml        # 🐳 Build and push to ECR
+│   └── manage-environment.yml  # ⚙️ Manage infrastructure
+├── terraform/tests/
+│   ├── vpc.tftest.hcl          # Network validation tests
+│   ├── eks.tftest.hcl          # EKS cluster tests
+│   └── rds.tftest.hcl          # Database tests
 ├── docs/
 │   ├── EKS_UPGRADE_NOTES.md    # EKS v1.32 migration guide
 │   ├── SWITCH_GUIDE.md         # Environment switching guide
 │   ├── DATABASE_CONFIG.md      # PostgreSQL configuration
 │   ├── DEPLOYMENT_GUIDE.md     # Deployment step-by-step
 │   ├── TROUBLESHOOTING.md      # Common issues and fixes
+│   ├── OBSERVABILITY.md        # Grafana Stack complete guide
 │   └── QUICK_REFERENCE.md      # Quick commands reference
 └── README.md
 ```
@@ -305,32 +325,205 @@ Veja [GITHUB_SECRETS.md](./GITHUB_SECRETS.md) para instruções detalhadas.
 
 ## 🎯 Workflows CI/CD
 
-### **1. terraform-bootstrap.yml**
+### **Overview de Workflows**
+
+O projeto possui **8 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
+
+| Workflow | Emoji | Trigger | Função |
+|----------|-------|---------|--------|
+| Tests | 🧪 | Push, PR | Valida Terraform (fmt, validate, test) |
+| Terraform Plan | 📊 | Pull Request | Gera relatório de convergência (add/change/destroy) |
+| Terraform Bootstrap | 🏗️ | Manual | Cria backend S3 + DynamoDB |
+| Terraform Deploy | 🚀 | Manual, Push | Deploy infraestrutura base (VPC, EC2, ALB, RDS) |
+| EKS Deploy | ☸️ | Manual | Provisiona/deploy/destroy cluster EKS |
+| Deploy Observability Stack | 📊 | Manual | Instala Grafana Stack (Prometheus + Grafana + Loki) |
+| Switch Environment | 🔄 | Manual | Alterna entre modo EC2 ↔️ EKS |
+| Docker Build & Push | 🐳 | Push (docker/, server/, client/) | Build e push para ECR |
+
+---
+
+### **1. 🧪 Terraform Tests**
+Valida código Terraform em cada commit/PR
+
+```yaml
+Trigger: push, pull_request
+Branches: main, develop
+Actions:
+  - terraform fmt -check
+  - terraform validate
+  - terraform test (vpc, eks, rds)
+```
+
+**Quando usar:**
+- Automático em todo push/PR
+- Valida sintaxe e lógica antes do merge
+
+---
+
+### **2. 📊 Terraform Plan Report**
+Gera relatório detalhado de mudanças em Pull Requests
+
+```yaml
+Trigger: pull_request
+Branches: main
+Actions:
+  - terraform init
+  - terraform plan
+  - Parse output (resources to add/change/destroy)
+  - Comment no PR com tabela de mudanças
+  - Upload plan artifact (5 dias)
+```
+
+**Output Exemplo:**
+```
+📊 Terraform Plan Report - stg
+
+📝 Summary:
+Resources to add: 5
+Resources to change: 2
+Resources to destroy: 1
+
+🔍 Detailed Changes:
++ aws_eks_cluster.main
++ aws_eks_node_group.main
+~ aws_security_group.eks (tags)
+- aws_instance.old_server
+```
+
+**Quando usar:**
+- Automático em todo Pull Request
+- Review de mudanças antes do merge
+- Detecção de drift de infraestrutura
+
+---
+
+### **3. 🏗️ Terraform Bootstrap**
 Cria backend S3 + DynamoDB para Terraform state
 
-### **2. tf-deploy.yml**
+```yaml
+Trigger: workflow_dispatch (manual)
+Actions: bootstrap
+Output:
+  - S3 bucket: tx01-terraform-state-<account-id>
+  - DynamoDB table: tx01-terraform-locks
+```
+
+**Quando usar:**
+- Apenas uma vez no início do projeto
+- Se precisar recriar o backend
+
+---
+
+### **4. 🚀 Terraform Deploy**
 Deploy da infraestrutura base (VPC, EC2, ALB, RDS)
-- **Trigger**: Manual ou push em `terraform/`
-- **Actions**: `plan`, `apply`, `destroy`
 
-### **3. eks-deploy.yml**
+```yaml
+Trigger: workflow_dispatch (manual), push em terraform/
+Environment: stg, prd
+Actions: plan, apply, destroy
+```
+
+**Quando usar:**
+- Deploy inicial da infraestrutura
+- Atualizar recursos (VPC, ALB, RDS, Security Groups)
+- Destruir ambiente completo
+
+---
+
+### **5. ☸️ EKS Deploy**
 Deploy do cluster EKS e aplicações Kubernetes
-- **Trigger**: Manual
-- **Actions**: 
-  - `provision` - Cria cluster EKS
-  - `deploy` - Faz deploy das aplicações
-  - `destroy` - Remove cluster
 
-### **4. switch-environment.yml**
+```yaml
+Trigger: workflow_dispatch (manual)
+Environment: stg, prd
+Actions:
+  - provision: Cria cluster EKS + node groups
+  - deploy: Deploy de aplicações K8s
+  - destroy: Remove cluster EKS
+```
+
+**Recursos criados:**
+- EKS Cluster v1.32
+- Node Group (2x t3.small)
+- AWS Load Balancer Controller
+- Metrics Server
+- Deployments + Services + Ingress + HPA
+
+**Quando usar:**
+- Criar cluster Kubernetes
+- Fazer deploy/atualizar aplicações
+- Remover cluster para economizar
+
+---
+
+### **6. 📊 Deploy Observability Stack**
+Instala stack completo de monitoramento (Grafana + Prometheus + Loki)
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Environment: stg, prd
+Actions:
+  - install: Instalação completa (~5-8 min)
+  - upgrade: Atualiza stack existente (~2-3 min)
+  - uninstall: Remove stack, preserva dados (~1-2 min)
+```
+
+**Stack instalado:**
+- ✅ Prometheus (métricas, 7d retention, 10Gi)
+- ✅ Grafana (dashboards, 5Gi storage)
+- ✅ Loki (logs, 7d retention, 10Gi)
+- ✅ Promtail (coleta de logs)
+- ✅ AlertManager (15+ alertas críticos)
+
+**Output:**
+- URL do Grafana LoadBalancer
+- Status dos pods
+- Comandos para port-forward
+- Credenciais de acesso
+
+**Quando usar:**
+- Após criar cluster EKS
+- Adicionar monitoramento a ambiente existente
+- Atualizar versões do stack
+- Remover observability temporariamente
+
+**💰 Custo:** ~$2.50/mês (apenas volumes EBS)
+
+---
+
+### **7. 🔄 Switch Environment**
 Alterna entre modo EC2 e modo EKS
-- **Trigger**: Manual
-- **Modes**:
-  - `eks` - Ativa EKS, para EC2s
-  - `ec2` - Ativa EC2s, para pods EKS
 
-### **5. docker-build.yml**
+```yaml
+Trigger: workflow_dispatch (manual)
+Environment: stg, prd
+Modes:
+  - eks: Ativa EKS, para EC2s
+  - ec2: Ativa EC2s, para pods EKS
+```
+
+**Quando usar:**
+- Economizar custos (EKS ~$156 → EC2 ~$54)
+- Testar diferentes arquiteturas
+- Manutenção de um ambiente
+
+---
+
+### **8. 🐳 Docker Build & Push**
 Build e push de imagens Docker para ECR
-- **Trigger**: Push em `docker/`, `server/`, `client/`
+
+```yaml
+Trigger: push em docker/, server/, client/
+Actions:
+  - Build multi-stage image
+  - Vulnerability scan (Trivy)
+  - Push to ECR
+  - Update ECS/EC2 (se aplicável)
+```
+
+**Quando usar:**
+- Automático ao atualizar código da aplicação
+- Build manual de nova versão
 
 ## 🌐 Acessar a Aplicação
 
@@ -459,37 +652,332 @@ terraform test rds.tftest.hcl
 - ✅ **RDS Tests**: Database config, backups, encryption
 - ✅ **CI/CD Tests**: Automated validation on every commit
 
-## 📊 Observability
+## 📊 Observability Stack
 
-### Grafana Stack Installation
+### 🎯 Stack Completo de Monitoramento
+
+O projeto inclui um stack completo de observabilidade baseado em **Grafana Stack** (totalmente gratuito) para monitoramento de aplicações, infraestrutura e logs.
+
+| Component | Purpose | Retention | Storage |
+|-----------|---------|-----------|---------|
+| **Prometheus** | Métricas (CPU, RAM, requests) | 7 dias | 10Gi |
+| **Grafana** | Dashboards e visualização | - | 5Gi |
+| **Loki** | Agregação de logs | 7 dias | 10Gi |
+| **Promtail** | Coleta de logs dos pods | - | - |
+| **AlertManager** | Gerenciamento de alertas | - | - |
+
+**💰 Custo Total**: ~$2.50/mês (apenas volumes EBS)
+
+---
+
+### 🚀 Deploy Automático via GitHub Actions
+
+#### **Opção 1: Workflow Automatizado (Recomendado)**
+
+```bash
+# 1. Acesse GitHub Actions
+https://github.com/maringelix/tx01/actions
+
+# 2. Selecione "📊 Deploy Observability Stack"
+
+# 3. Clique em "Run workflow"
+
+# 4. Configure:
+   Environment: stg ou prd
+   Action: install     # Primeira instalação
+          upgrade      # Atualizar stack existente  
+          uninstall    # Remover stack (preserva dados)
+
+# 5. Aguarde ~5-8 minutos para instalação completa
+```
+
+**O workflow automaticamente:**
+- ✅ Instala Prometheus + Grafana + Loki + Promtail
+- ✅ Aplica 15+ alertas críticos pré-configurados
+- ✅ Configura retenção de 7 dias
+- ✅ Provisiona volumes persistentes (10Gi/5Gi)
+- ✅ Obtém URL do Grafana LoadBalancer
+- ✅ Verifica saúde dos pods
+
+---
+
+#### **Opção 2: Instalação Manual (Alternativa)**
 
 ```bash
 # Quick install
 chmod +x k8s/install-grafana-stack.sh
 ./k8s/install-grafana-stack.sh
 
-# Access Grafana
-kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-# URL: http://localhost:3000 (admin/admin)
+# Verificar instalação
+kubectl get pods -n monitoring
+kubectl get pvc -n monitoring
 ```
 
-### Monitoring Stack
+---
 
-| Component | Purpose | Status |
-|-----------|---------|--------|
-| **Prometheus** | Metrics collection | ✅ |
-| **Grafana** | Dashboards & visualization | ✅ |
-| **Loki** | Log aggregation | ✅ |
-| **AlertManager** | Alert management | ✅ |
+### 🔐 Acessar Grafana
 
-### Pre-configured Dashboards
+#### **Opção A: Port-Forward (Grátis - Recomendado)**
 
-- 📊 Cluster Overview (CPU, RAM, pods, nodes)
-- 🎯 Application Metrics (requests, latency, errors)
-- 💾 Database Monitoring (connections, queries)
-- 🔔 Critical Alerts (downtime, high load)
+```bash
+# Forward porta local
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
 
-📚 **Full Guide**: [OBSERVABILITY.md](./OBSERVABILITY.md)
+# Acessar no browser
+http://localhost:3000
+
+# Credenciais padrão
+Username: admin
+Password: admin
+```
+
+💡 **Economia**: $0/mês vs $18/mês do LoadBalancer
+
+#### **Opção B: LoadBalancer (Automático - Custa $18/mês)**
+
+```bash
+# URL fornecida pelo workflow
+# Ou obter manualmente:
+kubectl get svc -n monitoring kube-prometheus-stack-grafana
+
+# Acessar URL externa
+http://<load-balancer-url>
+```
+
+---
+
+### 📊 Dashboards Pré-configurados
+
+Importe os seguintes dashboards no Grafana:
+
+| Dashboard | ID | Descrição |
+|-----------|-----|-----------|
+| **Node.js Application** | 11159 | Métricas de app Node.js/Express |
+| **PostgreSQL Database** | 9628 | Monitoramento RDS PostgreSQL |
+| **Kubernetes Cluster** | 15757 | Overview do cluster EKS |
+| **Kubernetes Pods** | 15760 | Métricas detalhadas dos pods |
+| **NGINX Ingress** | 9614 | Tráfego e latência do Ingress |
+
+**Como Importar:**
+1. Grafana → Menu (☰) → Dashboards → Import
+2. Cole o ID do dashboard
+3. Selecione o datasource "Prometheus"
+4. Click "Import"
+
+---
+
+### 🔔 Alertas Críticos (15+ Configurados)
+
+Os seguintes alertas são aplicados automaticamente:
+
+#### **Critical Alerts** (⚠️ Alta Prioridade)
+- 🔴 **ApplicationDown** - Aplicação indisponível
+- 🔴 **DatabaseDown** - PostgreSQL offline
+- 🔴 **NodeNotReady** - Node do cluster com problemas
+- 🔴 **PodCrashLooping** - Pod reiniciando continuamente
+- 🔴 **PersistentVolumeClaimPending** - Volume não provisionado
+
+#### **Warning Alerts** (⚠️ Média Prioridade)
+- 🟡 **HighErrorRate** - Taxa de erros >5%
+- 🟡 **HighLatency** - Latência P95 >500ms
+- 🟡 **HighCPUUsage** - CPU >80%
+- 🟡 **HighMemoryUsage** - RAM >85%
+- 🟡 **DiskPressure** - Disco >85%
+- 🟡 **DatabaseConnectionsHigh** - Conexões >80%
+- 🟡 **HighPodRestartRate** - Restarts frequentes
+
+**Configuração de Notificações:**
+```bash
+# Editar AlertManager config
+kubectl edit configmap -n monitoring alertmanager-kube-prometheus-stack-alertmanager
+
+# Adicionar integrações:
+# - AWS SNS
+# - Slack
+# - Email
+# - PagerDuty
+```
+
+---
+
+### 📈 Métricas Coletadas
+
+#### **Application Metrics** (via Prometheus)
+```bash
+# Total de requisições HTTP
+http_requests_total
+
+# Latência das requisições
+http_request_duration_seconds
+
+# Taxa de erros
+http_requests_errors_total
+
+# Conexões do banco
+pg_stat_database_numbackends
+```
+
+#### **Infrastructure Metrics**
+```bash
+# Uso de CPU dos pods
+container_cpu_usage_seconds_total
+
+# Uso de memória dos pods
+container_memory_working_set_bytes
+
+# Tráfego de rede
+container_network_transmit_bytes_total
+```
+
+#### **Database Metrics** (PostgreSQL)
+```bash
+# Conexões ativas
+pg_stat_database_numbackends
+
+# Queries executadas
+pg_stat_database_xact_commit
+
+# Tamanho do banco
+pg_database_size_bytes
+```
+
+---
+
+### 📝 Logs com Loki
+
+#### **Visualizar Logs no Grafana**
+```bash
+# 1. Grafana → Explore
+# 2. Datasource: Loki
+# 3. Log browser: {namespace="default"}
+# 4. Filtros úteis:
+
+# Logs da aplicação
+{app="tx01-app"}
+
+# Logs de erro
+{app="tx01-app"} |= "error"
+
+# Logs por severidade
+{app="tx01-app"} | json | level="error"
+
+# Top 10 erros
+topk(10, sum by (level) (count_over_time({app="tx01-app"} [1h])))
+```
+
+#### **CLI: Logs via Promtail**
+```bash
+# Ver logs em tempo real
+kubectl logs -f -n monitoring -l app.kubernetes.io/name=promtail
+
+# Logs da aplicação
+kubectl logs -f deployment/tx01-app
+
+# Logs do banco (RDS)
+aws logs tail /aws/rds/instance/tx01-db-stg/postgresql --follow
+```
+
+---
+
+### 🔧 Gerenciamento do Stack
+
+#### **Atualizar Stack**
+```bash
+# Via Workflow (recomendado)
+GitHub Actions → Deploy Observability Stack → upgrade
+
+# Via CLI
+helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+  -n monitoring \
+  --values k8s/prometheus-values.yaml
+```
+
+#### **Remover Stack (Preserva Dados)**
+```bash
+# Via Workflow
+GitHub Actions → Deploy Observability Stack → uninstall
+
+# Os volumes persistentes são preservados
+kubectl get pvc -n monitoring
+```
+
+#### **Remover TUDO (Incluindo Dados)**
+```bash
+# ⚠️ CUIDADO: Remove dados históricos
+kubectl delete namespace monitoring
+```
+
+#### **Verificar Saúde**
+```bash
+# Status dos pods
+kubectl get pods -n monitoring
+
+# Métricas dos pods
+kubectl top pods -n monitoring
+
+# Logs do Prometheus
+kubectl logs -n monitoring -l app.kubernetes.io/name=prometheus
+
+# Logs do Grafana
+kubectl logs -n monitoring -l app.kubernetes.io/name=grafana
+```
+
+---
+
+### 💡 Dicas de Uso
+
+#### **1. Configurar senha customizada no Grafana**
+```bash
+# Adicionar secret no GitHub
+Settings > Secrets > Actions
+Nome: GRAFANA_PASSWORD
+Valor: SuaSenhaSegura123!
+
+# O workflow usará automaticamente
+```
+
+#### **2. Persistência de Dados**
+```bash
+# Os dados são salvos em volumes EBS
+# Mesmo se deletar os pods, dados permanecem
+
+# Verificar volumes
+kubectl get pvc -n monitoring
+
+# Verificar uso
+kubectl exec -n monitoring prometheus-kube-prometheus-stack-prometheus-0 -- \
+  df -h /prometheus
+```
+
+#### **3. Exportar Dashboards**
+```bash
+# Grafana → Dashboard → Share → Export → Save to file
+# Commit no repo: k8s/dashboards/custom-dashboard.json
+```
+
+#### **4. Consultar Métricas via API**
+```bash
+# Port-forward Prometheus
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090
+
+# Query via curl
+curl 'http://localhost:9090/api/v1/query?query=up'
+```
+
+---
+
+### 📚 Documentação Completa
+
+📖 **Guia Detalhado**: [OBSERVABILITY.md](./OBSERVABILITY.md)
+
+**Conteúdo:**
+- Setup passo-a-passo
+- Configuração de alertas customizados
+- Queries Prometheus avançadas
+- Integrações (Slack, SNS, Email)
+- Dashboard customization
+- Troubleshooting
+- Best practices
 
 ### **AWS CloudWatch**
 ```bash
@@ -618,26 +1106,33 @@ aws rds modify-db-instance \
 - **Multi-AZ** - Alta disponibilidade em 2 zonas
 
 ### ✅ **DevOps Excellence**
-- **CI/CD Completo** - 5 workflows GitHub Actions totalmente automatizados
+- **CI/CD Completo** - 8 workflows GitHub Actions totalmente automatizados
 - **Infrastructure as Code** - 100% Terraform com módulos reutilizáveis
+- **Automated Testing** - Terraform validation tests (vpc, eks, rds)
+- **Drift Detection** - Terraform Plan reports em Pull Requests
 - **GitOps Ready** - Manifests Kubernetes versionados
 - **Security First** - WAF, IRSA, Secrets Manager, Security Groups
-- **Documentação Completa** - 6 guias detalhados
+- **Observability** - Grafana Stack completo (Prometheus + Grafana + Loki)
+- **Documentação Completa** - 7 guias detalhados
 
 ### ✅ **Produção Ready**
 - **Zero Downtime Deployments** - Rolling updates configurados
 - **Health Checks** - Liveness e Readiness probes
 - **Resource Limits** - Requests e limits definidos
-- **Metrics & Monitoring** - Metrics Server fornecendo dados para HPA
+- **Metrics & Monitoring** - Prometheus + Grafana com 15+ alertas
+- **Log Aggregation** - Loki para logs centralizados
+- **Alert Management** - AlertManager configurado
 - **Database Schema** - Criado automaticamente no startup
 - **SSL/TLS Ready** - Preparado para certificados ACM
 
 ### 📊 **Estatísticas do Projeto**
-- 📝 **20+ Commits** - Desenvolvimento incremental
-- 🔧 **5 Workflows** - Automação completa
-- 📚 **6 Guias** - Documentação abrangente
+- 📝 **30+ Commits** - Desenvolvimento incremental
+- 🔧 **8 Workflows** - Automação completa (Tests, Deploy, Observability)
+- 📚 **7 Guias** - Documentação abrangente (incluindo Observability)
 - ☁️ **30+ Recursos AWS** - Infraestrutura robusta
-- 🐛 **10+ Issues Resolvidos** - Troubleshooting avançado
+- 📊 **15+ Alertas** - Monitoramento proativo
+- 🧪 **3 Test Suites** - Terraform validation (vpc, eks, rds)
+- 🐛 **15+ Issues Resolvidos** - Troubleshooting avançado
 - ⚡ **< 5min Deploy** - Pipeline otimizado
 
 ### 💰 **Custo Otimizado**
@@ -646,8 +1141,16 @@ Modo EKS (Produção):
 ├─ EKS Control Plane: ~$73/mês
 ├─ EKS Nodes (2x t3.small): ~$60/mês
 ├─ RDS (t4g.micro): ~$15/mês
-├─ EC2 stopped (2x t3.micro): ~$8/mês
-└─ Total: ~$156/mês
+├─ ALB: ~$23/mês
+├─ Grafana Stack (EBS volumes): ~$2.50/mês
+├─ EC2 stopped (2x t3.micro): ~$8/mês (volumes)
+└─ Total: ~$181.50/mês
+
+Modo EKS + LoadBalancer Grafana:
+├─ EKS + RDS + ALB: ~$171/mês
+├─ Grafana LoadBalancer: ~$18/mês
+├─ Grafana Stack (EBS): ~$2.50/mês
+└─ Total: ~$191.50/mês
 
 Modo EC2 (Desenvolvimento):
 ├─ EC2 (2x t3.micro): ~$16/mês
@@ -656,7 +1159,8 @@ Modo EC2 (Desenvolvimento):
 ├─ EKS stopped: $0/mês
 └─ Total: ~$54/mês
 
-💡 Economia com switch: Até 65%
+💡 Economia com switch: Até 70%
+💡 Use port-forward no Grafana: Economize $18/mês no LoadBalancer
 ```
 
 ### 🌟 **Habilidades Demonstradas**
@@ -672,16 +1176,20 @@ Modo EC2 (Desenvolvimento):
 
 ## 🚀 Próximos Passos Sugeridos
 
-- [ ] **Monitoramento**: Adicionar Prometheus + Grafana
-- [ ] **Logs Centralizados**: Implementar ELK Stack ou CloudWatch Logs Insights
-- [ ] **Alertas**: Configurar SNS + CloudWatch Alarms
-- [ ] **Testes Automatizados**: Adicionar testes de integração
+- [x] **✅ Monitoramento**: Grafana Stack implementado (Prometheus + Grafana + Loki)
+- [x] **✅ Testes Automatizados**: Terraform validation tests implementados
+- [x] **✅ Drift Detection**: Terraform Plan workflow com relatórios em PRs
+- [ ] **Alertas Avançados**: Configurar notificações via SNS/Slack/Email
+- [ ] **Logs Centralizados**: Expandir queries e dashboards do Loki
+- [ ] **APM (Application Performance Monitoring)**: Adicionar distributed tracing (Tempo/Jaeger)
 - [ ] **Blue/Green Deployment**: Implementar estratégia de deploy avançada
 - [ ] **Service Mesh**: Adicionar Istio ou AWS App Mesh
 - [ ] **GitOps**: Migrar para ArgoCD ou Flux
-- [ ] **Backup Automation**: Snapshots automatizados do RDS
+- [ ] **Backup Automation**: Snapshots automatizados do RDS e volumes EBS
 - [ ] **Multi-Region**: Expandir para disaster recovery
 - [ ] **Cost Optimization**: Implementar AWS Cost Explorer automation
+- [ ] **Security Scanning**: Adicionar SAST/DAST no pipeline
+- [ ] **Chaos Engineering**: Implementar testes de resiliência
 
 ---
 
