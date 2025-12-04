@@ -1,0 +1,244 @@
+name: 💥 Destroy and Recreate Node Group
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+      new_instance_type:
+        description: 'New Instance Type'
+        required: true
+        type: choice
+        default: 't3.large'
+        options:
+          - t3.medium
+          - t3.large
+          - t3.xlarge
+      confirm:
+        description: 'Type DESTROY to confirm (will cause downtime)'
+        required: true
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.5.0
+
+jobs:
+  destroy-and-recreate:
+    name: 💥 Destroy and Recreate Node Group
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ✅ Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DESTROY" ]; then
+            echo "❌ Confirmation failed. You must type exactly 'DESTROY'"
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+      
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 📊 Current Node Group Status
+        run: |
+          echo "📊 Current configuration:"
+          aws eks describe-nodegroup \
+            --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+            --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'nodegroup.{InstanceType:instanceTypes[0],Status:status,DesiredSize:scalingConfig.desiredSize}' \
+            --output table
+      
+      - name: 💥 Delete Node Group via AWS CLI
+        run: |
+          echo "💥 Deleting node group tx01-ng-${{ github.event.inputs.environment }}..."
+          aws eks delete-nodegroup \
+            --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+            --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Delete command sent"
+      
+      - name: ⏳ Wait for Node Group Deletion
+        run: |
+          echo "⏳ Waiting for node group to be deleted..."
+          
+          MAX_WAIT=1200  # 20 minutes
+          ELAPSED=0
+          
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            set +e
+            STATUS=$(aws eks describe-nodegroup \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'nodegroup.status' \
+              --output text 2>&1)
+            EXIT_CODE=$?
+            set -e
+            
+            if [ $EXIT_CODE -ne 0 ]; then
+              if echo "$STATUS" | grep -q "ResourceNotFoundException"; then
+                echo "✅ Node group successfully deleted"
+                break
+              fi
+            fi
+            
+            echo "Node group status: $STATUS (${ELAPSED}s elapsed)"
+            sleep 30
+            ELAPSED=$((ELAPSED + 30))
+          done
+          
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "❌ Timeout waiting for deletion"
+            exit 1
+          fi
+      
+      - name: 🏗️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: 🔄 Update Terraform Variables
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "🔄 Updating terraform.tfvars..."
+          sed -i "s/eks_node_instance_type  = \".*\"/eks_node_instance_type  = \"${{ github.event.inputs.new_instance_type }}\"/" terraform.tfvars
+          
+          echo "✅ Updated configuration:"
+          grep "eks_node_instance_type" terraform.tfvars
+      
+      - name: 🔧 Terraform Init
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: terraform init
+      
+      - name: 🔄 Refresh Terraform State
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "🔄 Refreshing Terraform state..."
+          terraform refresh
+      
+      - name: 📋 Terraform Plan
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "📋 Planning new node group creation..."
+          terraform plan -out=tfplan
+      
+      - name: 🚀 Terraform Apply (Create New Node Group)
+        working-directory: terraform/${{ github.event.inputs.environment }}
+        run: |
+          echo "🚀 Creating new node group with ${{ github.event.inputs.new_instance_type }}..."
+          terraform apply -auto-approve tfplan
+      
+      - name: ⏳ Wait for New Node Group to be Active
+        run: |
+          echo "⏳ Waiting for new node group to become ACTIVE..."
+          
+          MAX_WAIT=1200  # 20 minutes
+          ELAPSED=0
+          
+          while [ $ELAPSED -lt $MAX_WAIT ]; do
+            STATUS=$(aws eks describe-nodegroup \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+              --region ${{ env.AWS_REGION }} \
+              --query 'nodegroup.status' \
+              --output text)
+            
+            echo "Node group status: $STATUS (${ELAPSED}s elapsed)"
+            
+            if [ "$STATUS" = "ACTIVE" ]; then
+              echo "✅ Node group is ACTIVE"
+              break
+            fi
+            
+            sleep 30
+            ELAPSED=$((ELAPSED + 30))
+          done
+          
+          if [ $ELAPSED -ge $MAX_WAIT ]; then
+            echo "❌ Timeout waiting for node group to become ACTIVE"
+            exit 1
+          fi
+      
+      - name: ☸️ Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name tx01-eks-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }}
+      
+      - name: 🔍 Verify New Nodes
+        run: |
+          echo "🔍 Verifying new nodes..."
+          kubectl get nodes -o custom-columns=NAME:.metadata.name,STATUS:.status.conditions[-1].type,INSTANCE:.metadata.labels.'node\.kubernetes\.io/instance-type',AGE:.metadata.creationTimestamp
+          
+          echo ""
+          echo "📦 Waiting 90 seconds for pods to stabilize..."
+          sleep 90
+          
+          echo ""
+          echo "📊 Pod status across all namespaces:"
+          kubectl get pods --all-namespaces -o wide
+      
+      - name: 🔧 Scale Up Critical Workloads
+        run: |
+          echo "🔧 Ensuring critical workloads are running..."
+          
+          # Check if tx01-app deployment exists and scale if needed
+          if kubectl get deployment tx01-app -n default &> /dev/null; then
+            echo "Scaling tx01-app to 2 replicas..."
+            kubectl scale deployment tx01-app -n default --replicas=2
+          fi
+          
+          # Check Gatekeeper
+          if kubectl get namespace gatekeeper-system &> /dev/null; then
+            echo "Scaling Gatekeeper..."
+            kubectl scale deployment gatekeeper-controller-manager -n gatekeeper-system --replicas=1 || true
+            kubectl scale deployment gatekeeper-audit -n gatekeeper-system --replicas=1 || true
+          fi
+      
+      - name: 📊 Commit Updated Config
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add terraform/${{ github.event.inputs.environment }}/terraform.tfvars
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: upgrade EKS nodes to ${{ github.event.inputs.new_instance_type }} [skip ci]"
+            git push
+          fi
+      
+      - name: 🎯 Summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ NODE GROUP RECREATED SUCCESSFULLY"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "📊 New Configuration:"
+          aws eks describe-nodegroup \
+            --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+            --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'nodegroup.{InstanceType:instanceTypes[0],DesiredSize:scalingConfig.desiredSize,Status:status}' \
+            --output table
+          
+          echo ""
+          echo "🚀 Application should be back online!"
+          echo "   Verify: kubectl get pods -n default"
+          echo "   Next: Deploy observability stack and Gatekeeper"
