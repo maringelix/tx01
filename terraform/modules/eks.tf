@@ -310,23 +310,6 @@ resource "aws_cloudwatch_log_group" "eks_cluster" {
   tags = var.tags
 }
 
-# OIDC Provider for IRSA (IAM Roles for Service Accounts)
-data "tls_certificate" "eks" {
-  count = var.enable_eks ? 1 : 0
-  
-  url = aws_eks_cluster.main[0].identity[0].oidc[0].issuer
-}
-
-resource "aws_iam_openid_connect_provider" "eks" {
-  count = var.enable_eks ? 1 : 0
-  
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [data.tls_certificate.eks[0].certificates[0].sha1_fingerprint]
-  url             = aws_eks_cluster.main[0].identity[0].oidc[0].issuer
-
-  tags = var.tags
-}
-
 # IAM Role for AWS Load Balancer Controller
 resource "aws_iam_role" "aws_load_balancer_controller" {
   count = var.enable_eks ? 1 : 0
