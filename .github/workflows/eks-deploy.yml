@@ -220,7 +220,7 @@ jobs:
       id: ecr
       run: |
         REPO_URL=$(aws ecr describe-repositories \
-          --repository-names tx01-nginx \
+          --repository-names dx01-app \
           --region ${{ env.AWS_REGION }} \
           --query 'repositories[0].repositoryUri' \
           --output text)
@@ -230,7 +230,7 @@ jobs:
       id: image
       run: |
         LATEST_TAG=$(aws ecr describe-images \
-          --repository-name tx01-nginx \
+          --repository-name dx01-app \
           --region ${{ env.AWS_REGION }} \
           --query 'sort_by(imageDetails,& imagePushedAt)[-1].imageTags[0]' \
           --output text)
