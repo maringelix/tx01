@@ -1,4 +1,4 @@
-name: Terraform Tests
+name: 🧪 Terraform Tests
 
 on:
   push:

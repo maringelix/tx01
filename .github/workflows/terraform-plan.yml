@@ -1,0 +1,148 @@
+name: 📊 Terraform Plan Report
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'terraform/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to plan'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  terraform-plan:
+    name: 📋 Plan ${{ github.event.inputs.environment || 'stg' }}
+    runs-on: ubuntu-latest
+    
+    env:
+      ENVIRONMENT: ${{ github.event.inputs.environment || 'stg' }}
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+      
+      - name: ⚙️ Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+      
+      - name: 🏗️ Terraform Init
+        working-directory: ./terraform/${{ env.ENVIRONMENT }}
+        run: |
+          terraform init \
+            -backend-config="bucket=tx01-terraform-state-${{ env.ENVIRONMENT }}" \
+            -backend-config="key=terraform.tfstate" \
+            -backend-config="region=us-east-1"
+      
+      - name: 📊 Terraform Plan
+        id: plan
+        working-directory: ./terraform/${{ env.ENVIRONMENT }}
+        run: |
+          terraform plan -detailed-exitcode -out=tfplan 2>&1 | tee plan.txt
+          echo "exitcode=$?" >> $GITHUB_OUTPUT
+        continue-on-error: true
+      
+      - name: 📈 Parse Plan Output
+        id: parse
+        working-directory: ./terraform/${{ env.ENVIRONMENT }}
+        run: |
+          # Extract resources to add, change, destroy
+          PLAN_OUTPUT=$(cat plan.txt)
+          
+          # Count changes
+          ADD=$(echo "$PLAN_OUTPUT" | grep -c "will be created" || echo "0")
+          CHANGE=$(echo "$PLAN_OUTPUT" | grep -c "will be updated" || echo "0")
+          DESTROY=$(echo "$PLAN_OUTPUT" | grep -c "will be destroyed" || echo "0")
+          
+          echo "add=$ADD" >> $GITHUB_OUTPUT
+          echo "change=$CHANGE" >> $GITHUB_OUTPUT
+          echo "destroy=$DESTROY" >> $GITHUB_OUTPUT
+          
+          # Determine plan status
+          if [ "${{ steps.plan.outputs.exitcode }}" == "0" ]; then
+            echo "status=✅ No changes" >> $GITHUB_OUTPUT
+          elif [ "${{ steps.plan.outputs.exitcode }}" == "2" ]; then
+            echo "status=📝 Changes detected" >> $GITHUB_OUTPUT
+          else
+            echo "status=❌ Plan failed" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: 💬 Comment PR with Plan
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('./terraform/${{ env.ENVIRONMENT }}/plan.txt', 'utf8');
+            const truncatedPlan = plan.length > 65000 ? plan.substring(0, 65000) + '\n...(truncated)' : plan;
+            
+            const output = `## 📊 Terraform Plan Report - \`${{ env.ENVIRONMENT }}\`
+            
+            **Status:** ${{ steps.parse.outputs.status }}
+            
+            ### 📋 Changes Summary
+            
+            | Action | Count |
+            |--------|-------|
+            | 🟢 Create | ${{ steps.parse.outputs.add }} |
+            | 🟡 Update | ${{ steps.parse.outputs.change }} |
+            | 🔴 Destroy | ${{ steps.parse.outputs.destroy }} |
+            
+            <details>
+            <summary>📄 Full Plan Output</summary>
+            
+            \`\`\`terraform
+            ${truncatedPlan}
+            \`\`\`
+            
+            </details>
+            
+            **Pusher:** @${{ github.actor }}
+            **Action:** \`terraform plan\`
+            **Working Directory:** \`terraform/${{ env.ENVIRONMENT }}\`
+            **Workflow:** [\`${{ github.workflow }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+      
+      - name: 📤 Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ env.ENVIRONMENT }}
+          path: ./terraform/${{ env.ENVIRONMENT }}/tfplan
+          retention-days: 5
+      
+      - name: 🎯 Summary
+        run: |
+          echo "## 📊 Terraform Plan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** \`${{ env.ENVIRONMENT }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ steps.parse.outputs.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changes" >> $GITHUB_STEP_SUMMARY
+          echo "- 🟢 **Create:** ${{ steps.parse.outputs.add }} resources" >> $GITHUB_STEP_SUMMARY
+          echo "- 🟡 **Update:** ${{ steps.parse.outputs.change }} resources" >> $GITHUB_STEP_SUMMARY
+          echo "- 🔴 **Destroy:** ${{ steps.parse.outputs.destroy }} resources" >> $GITHUB_STEP_SUMMARY
