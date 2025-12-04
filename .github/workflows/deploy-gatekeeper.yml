@@ -75,11 +75,32 @@ jobs:
           kubectl create namespace gatekeeper-system --dry-run=client -o yaml | kubectl apply -f -
           echo "✅ Namespace ready"
       
+      - name: 🔍 Pre-install Debug
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🔍 Checking cluster resources before install..."
+          echo ""
+          echo "📊 Node status:"
+          kubectl get nodes -o wide
+          echo ""
+          echo "💾 Node resources:"
+          kubectl top nodes || echo "⚠️ Metrics server not available"
+          echo ""
+          echo "📦 Existing pods in gatekeeper-system:"
+          kubectl get pods -n gatekeeper-system || echo "No existing pods"
+          echo ""
+          echo "🔧 Checking for existing Helm release:"
+          helm list -n gatekeeper-system || echo "No existing release"
+      
       - name: 🛡️ Install OPA Gatekeeper
         if: github.event.inputs.action == 'install'
         run: |
           echo "🛡️ Installing OPA Gatekeeper..."
+          echo "⏰ Timeout: 10m"
+          echo "🔢 Replicas: 1"
+          echo ""
           
+          # Install with debug output
           helm upgrade --install gatekeeper gatekeeper/gatekeeper \
             --namespace gatekeeper-system \
             --set enableExternalData=false \
@@ -91,12 +112,20 @@ jobs:
             --set enableGeneratorResourceExpansion=true \
             --set metrics.enabled=true \
             --set metrics.prometheusEnabled=true \
+            --debug \
             --wait --timeout=10m
           
-          echo "✅ Gatekeeper installed"
-          
+          echo ""
+          echo "✅ Helm install command completed"
+          echo ""
           echo "📊 Checking pod status..."
-          kubectl get pods -n gatekeeper-system
+          kubectl get pods -n gatekeeper-system -o wide
+          echo ""
+          echo "📋 Pod details:"
+          kubectl describe pods -n gatekeeper-system | head -n 50
+          echo ""
+          echo "🔍 Recent events:"
+          kubectl get events -n gatekeeper-system --sort-by='.lastTimestamp' | tail -n 20
       
       - name: ⏳ Wait for Gatekeeper to be Ready
         if: github.event.inputs.action == 'install'
