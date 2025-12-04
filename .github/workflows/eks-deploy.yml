@@ -255,15 +255,6 @@ jobs:
 
         envsubst < k8s/secret.yaml | kubectl apply -f -
 
-    - name: Get ALB name
-      id: alb
-      run: |
-        ALB_NAME=$(aws elbv2 describe-load-balancers \
-          --region ${{ env.AWS_REGION }} \
-          --query "LoadBalancers[?contains(LoadBalancerName, 'tx01-alb-${{ inputs.environment }}')].LoadBalancerName" \
-          --output text)
-        echo "name=$ALB_NAME" >> $GITHUB_OUTPUT
-
     - name: Deploy Service Account
       run: |
         # Create service account without IRSA role for now
@@ -280,7 +271,6 @@ jobs:
 
     - name: Deploy Ingress
       run: |
-        export ALB_NAME="${{ steps.alb.outputs.name }}"
         export ENVIRONMENT="${{ inputs.environment }}"
 
         envsubst < k8s/ingress.yaml | kubectl apply -f -
