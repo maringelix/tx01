@@ -17,7 +17,7 @@ resource "aws_security_group" "rds" {
   description = "Security group for RDS PostgreSQL"
   vpc_id      = aws_vpc.main.id
 
-  # Allow PostgreSQL access from EC2 instances only
+  # Allow PostgreSQL access from EC2 instances
   ingress {
     from_port       = 5432
     to_port         = 5432
@@ -37,6 +37,18 @@ resource "aws_security_group" "rds" {
   tags = {
     Name = "${var.project_name}-rds-sg-${var.environment}"
   }
+}
+
+# Security Group Rule for EKS to RDS access (conditional)
+resource "aws_security_group_rule" "rds_from_eks" {
+  count                    = var.enable_eks ? 1 : 0
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = aws_eks_cluster.main[0].vpc_config[0].cluster_security_group_id
+  description              = "PostgreSQL from EKS cluster"
 }
 
 # Random password for database
