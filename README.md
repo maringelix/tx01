@@ -15,6 +15,33 @@
 
 ---
 
+## ⚠️ **Important Security Notice**
+
+> 🔒 **This is a demonstration/portfolio project showcasing DevOps best practices.**
+
+**Before using this in production:**
+
+- ⚠️ **DO NOT** copy AWS credentials to code or commit them to Git
+- ✅ All AWS credentials must be managed via **GitHub Secrets** or **AWS Secrets Manager**
+- ✅ Replace all placeholder values with your own configurations
+- ✅ Review and adjust IAM policies according to your security requirements
+- ✅ Enable encryption at rest and in transit for all resources
+- ✅ Implement proper backup and disaster recovery strategies
+- ✅ Follow your organization's security and compliance policies
+- ✅ Use AWS Organizations and SCPs for multi-account governance
+
+**Security Features Implemented:**
+- 🔐 No credentials in code (all via Secrets Manager/GitHub Secrets)
+- 🔐 S3 backend with encryption and versioning
+- 🔐 IRSA (IAM Roles for Service Accounts) for EKS
+- 🔐 Security Groups with least privilege
+- 🔐 RDS encryption at rest
+- 🔐 VPC with public/private subnets isolation
+
+**This project is safe to share publicly** - All sensitive data is properly externalized.
+
+---
+
 ## 📊 **Code Quality**
 
 <div align="center">
