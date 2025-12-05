@@ -48,6 +48,20 @@ resource "aws_security_group_rule" "rds_from_eks" {
   protocol                 = "tcp"
   security_group_id        = aws_security_group.rds.id
   source_security_group_id = aws_eks_cluster.main[0].vpc_config[0].cluster_security_group_id
+  description              = "PostgreSQL from EKS cluster security group"
+}
+
+# Security Group Rule for EKS Nodes to RDS access (conditional)
+resource "aws_security_group_rule" "rds_from_eks_nodes" {
+  count                    = var.enable_eks ? 1 : 0
+  type                     = "ingress"
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.rds.id
+  source_security_group_id = aws_security_group.eks_nodes[0].id
+  description              = "PostgreSQL from EKS worker nodes"
+}
   description              = "PostgreSQL from EKS cluster"
 }
 

@@ -28,6 +28,56 @@ resource "aws_eks_cluster" "main" {
   )
 }
 
+# Security Group for EKS Node Group
+resource "aws_security_group" "eks_nodes" {
+  count = var.enable_eks ? 1 : 0
+  
+  name        = "${var.project_name}-eks-nodes-sg-${var.environment}"
+  description = "Security group for EKS worker nodes"
+  vpc_id      = aws_vpc.main.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+
+  tags = merge(
+    var.tags,
+    {
+      Name = "${var.project_name}-eks-nodes-sg-${var.environment}"
+    }
+  )
+}
+
+# Allow communication between nodes
+resource "aws_security_group_rule" "eks_nodes_ingress_self" {
+  count = var.enable_eks ? 1 : 0
+  
+  type              = "ingress"
+  from_port         = 0
+  to_port           = 65535
+  protocol          = "-1"
+  self              = true
+  security_group_id = aws_security_group.eks_nodes[0].id
+  description       = "Allow nodes to communicate with each other"
+}
+
+# Allow cluster control plane to communicate with nodes
+resource "aws_security_group_rule" "eks_nodes_ingress_cluster" {
+  count = var.enable_eks ? 1 : 0
+  
+  type                     = "ingress"
+  from_port                = 1025
+  to_port                  = 65535
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.eks_nodes[0].id
+  source_security_group_id = aws_security_group.eks_cluster[0].id
+  description              = "Allow cluster control plane to communicate with nodes"
+}
+
 # EKS Node Group
 resource "aws_eks_node_group" "main" {
   count = var.enable_eks ? 1 : 0
@@ -56,6 +106,11 @@ resource "aws_eks_node_group" "main" {
     ManagedBy   = "terraform"
   }
 
+  # Attach node security group
+  remote_access {
+    source_security_group_ids = [aws_security_group.eks_nodes[0].id]
+  }
+
   # Force replacement when instance type changes
   lifecycle {
     create_before_destroy = true
@@ -65,6 +120,8 @@ resource "aws_eks_node_group" "main" {
     aws_iam_role_policy_attachment.eks_node_policy,
     aws_iam_role_policy_attachment.eks_cni_policy,
     aws_iam_role_policy_attachment.eks_container_registry_policy,
+    aws_security_group_rule.eks_nodes_ingress_self,
+    aws_security_group_rule.eks_nodes_ingress_cluster,
   ]
 
   tags = merge(
@@ -375,6 +432,11 @@ output "eks_cluster_endpoint" {
 output "eks_cluster_security_group_id" {
   description = "Security group ID attached to the EKS cluster"
   value       = var.enable_eks ? aws_eks_cluster.main[0].vpc_config[0].cluster_security_group_id : null
+}
+
+output "eks_node_security_group_id" {
+  description = "Security group ID for EKS worker nodes"
+  value       = var.enable_eks ? aws_security_group.eks_nodes[0].id : null
 }
 
 output "eks_cluster_oidc_issuer_url" {
