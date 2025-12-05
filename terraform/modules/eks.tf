@@ -421,6 +421,31 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
   ]
 }
 
+# ClusterRoleBinding para console AWS (permite visualizar nodes e recursos no console)
+resource "kubernetes_cluster_role_binding_v1" "console_admin" {
+  count = var.enable_eks && var.iam_user_name != "" ? 1 : 0
+
+  metadata {
+    name = "console-admin-binding"
+  }
+
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "cluster-admin"
+  }
+
+  subject {
+    kind      = "User"
+    name      = var.iam_user_name
+    api_group = "rbac.authorization.k8s.io"
+  }
+
+  depends_on = [
+    kubernetes_config_map_v1_data.aws_auth
+  ]
+}
+
 output "aws_load_balancer_controller_role_arn" {
   description = "ARN of IAM role for AWS Load Balancer Controller"
   value       = var.enable_eks ? aws_iam_role.aws_load_balancer_controller[0].arn : null
