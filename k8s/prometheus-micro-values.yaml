@@ -29,7 +29,7 @@ grafana:
     storageClassName: gp2
     size: 2Gi
   service:
-    type: LoadBalancer
+    type: ClusterIP  # Use port-forward to access (no LoadBalancer overhead)
   resources:
     requests:
       memory: 100Mi
