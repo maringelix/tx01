@@ -262,6 +262,120 @@ aws cloudwatch put-dashboard \
   --dashboard-body file://dashboard-config.json
 ```
 
+## 🚨 EKS Nodes Failing to Join Cluster (Orphan Nodes)
+
+### Sintomas
+
+- Instância EC2 está `running` mas não aparece em `kubectl get nodes`
+- Health checks da instância passam (2/2 ou 3/3)
+- ASG mostra `desiredSize=X` mas Kubernetes tem menos nodes
+- SSM Agent não responde (`InvalidInstanceId` error)
+
+### Diagnóstico Rápido
+
+Use o script automatizado:
+
+```bash
+# Listar EC2 instances do cluster
+aws ec2 describe-instances \
+  --filters "Name=tag:eks:cluster-name,Values=tx01-eks-stg" \
+            "Name=instance-state-name,Values=running" \
+  --query 'Reservations[*].Instances[*].[InstanceId,PrivateIpAddress,LaunchTime]' \
+  --output table
+
+# Listar nodes do Kubernetes
+kubectl get nodes -o wide
+
+# Comparar IPs para encontrar orphan
+# Use o script para diagnosticar:
+./troubleshoot-eks-node.sh i-XXXXXXXXXXXXXXXXX
+```
+
+### Diagnóstico Manual
+
+```bash
+# 1. Verificar status da instância
+aws ec2 describe-instance-status --instance-ids i-XXXXXXXXXXXXXXXXX
+
+# 2. Verificar se node existe no Kubernetes
+kubectl get nodes -o json | jq -r '.items[].status.addresses[] | select(.type=="InternalIP") | .address'
+
+# 3. Tentar conectar via SSM
+aws ssm send-command \
+  --instance-ids i-XXXXXXXXXXXXXXXXX \
+  --document-name "AWS-RunShellScript" \
+  --parameters "commands=systemctl status kubelet --no-pager"
+
+# 4. Se SSM funcionar, verificar logs
+aws ssm start-session --target i-XXXXXXXXXXXXXXXXX
+# Dentro da sessão:
+sudo tail -100 /var/log/cloud-init-output.log
+sudo journalctl -u kubelet -n 100 --no-pager
+sudo systemctl status containerd
+```
+
+### Causas Comuns
+
+1. **SSM Agent não iniciou**: Falha no bootstrap, IAM role incorreto
+2. **Kubelet falhou**: Erro de configuração, problema de rede
+3. **Containerd não rodando**: Falha no serviço, dependências faltando
+4. **Conectividade**: Node não consegue alcançar control plane do EKS
+5. **IAM Role**: Instância sem permissões necessárias
+
+### Solução
+
+**Se SSM Agent NÃO responde:**
+```bash
+# Terminar a instância (ASG vai criar outra)
+aws ec2 terminate-instances --instance-ids i-XXXXXXXXXXXXXXXXX --region us-east-1
+
+# Aguardar ASG criar nova instância
+watch kubectl get nodes
+
+# Verificar que nova instância juntou ao cluster
+kubectl get nodes -o wide
+```
+
+**Se SSM Agent responde:**
+```bash
+# Conectar e diagnosticar
+aws ssm start-session --target i-XXXXXXXXXXXXXXXXX
+
+# Executar diagnóstico no node
+sudo /home/ec2-user/diagnose-node.sh
+
+# Verificar logs específicos
+sudo journalctl -u kubelet -f
+sudo journalctl -u containerd -f
+sudo tail -f /var/log/cloud-init-output.log
+```
+
+### Prevenção
+
+- Use o script `troubleshoot-eks-node.sh` para detectar orphans rapidamente
+- Monitor node count: `kubectl get nodes --no-headers | wc -l` vs ASG desired size
+- CloudWatch Alarm para node count mismatch
+- Verifique user_data script do Terraform para erros de bootstrap
+
+### Exemplo Real (2025-12-05)
+
+```bash
+# Problema: 8 EC2 instances, mas apenas 7 Kubernetes nodes
+$ kubectl get nodes | wc -l
+7
+
+$ aws ec2 describe-instances --filters "Name=tag:eks:cluster-name,Values=tx01-eks-stg" | jq '.Reservations[].Instances[].InstanceId' | wc -l
+8
+
+# Orphan identificado: i-0a4427835cdae5d85 (10.0.10.241)
+$ ./troubleshoot-eks-node.sh i-0a4427835cdae5d85
+# Resultado: SSM Agent not responding
+
+# Solução: Terminar instância
+$ aws ec2 terminate-instances --instance-ids i-0a4427835cdae5d85
+# ASG criou nova instância que juntou ao cluster com sucesso
+```
+
 ## 🔄 Redeploy e Rollback
 
 ### Rollback de Imagem Docker

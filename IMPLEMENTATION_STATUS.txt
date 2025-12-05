@@ -1,8 +1,62 @@
 ================================================================================
 TX01 - IMPLEMENTAÇÃO COMPLETA
 ================================================================================
-Data: 26 de Novembro de 2024
+Data Inicial: 26 de Novembro de 2024
+Última Atualização: 05 de Dezembro de 2025
 Status: ✅ CONCLUÍDO COM SUCESSO
+
+================================================================================
+🆕 MUDANÇAS RECENTES (2025-12-05)
+================================================================================
+
+✅ PLAN 3 - ULTRA MICRO OBSERVABILITY STACK (100%)
+   - Stack otimizada para Free Tier AWS (7x t3.micro nodes)
+   - Total de recursos: 288Mi RAM, 105m CPU (redução de 46%)
+   - 4 pods principais: Prometheus, Grafana, KSM, Operator
+   - Prometheus: 128Mi-256Mi RAM, 1Gi storage, 2d retention, 60s scrape
+   - Grafana: 64Mi-128Mi RAM, storage efêmero (sem persistência)
+   - KSM: 32Mi-64Mi RAM para métricas de estado do cluster
+   - Operator: 64Mi-128Mi RAM, webhooks desabilitados
+   - Desabilitados: AlertManager, Node Exporter, Default Alerting Rules
+   - Arquivo: k8s/prometheus-micro-values.yaml (4 replacements)
+
+✅ WORKFLOW OBSERVABILITY OPTIMIZATIONS (100%)
+   - Removida lógica de auto-scaling agressiva (12 nodes)
+   - Validação de capacidade alterada: 4 → 3 free slots requeridos
+   - Cálculo de capacidade: READY_NODES * 4 pods per node (limite t3.micro)
+   - Mensagens de erro detalhadas com instruções de correção
+   - Workflow: .github/workflows/deploy-observability-micro.yml (3 replacements)
+
+✅ TROUBLESHOOTING AUTOMATION (100%)
+   - troubleshoot-eks-node.sh: Script de 170 linhas para diagnóstico
+     * Valida existência de instância EC2
+     * Verifica membership no Kubernetes por IP
+     * Testa conectividade do SSM Agent
+     * Fornece recomendação de terminação se SSM falhar
+     * Lista passos para diagnóstico manual via Session Manager
+   - diagnose-node.sh: Script para diagnóstico on-instance
+     * Verifica status kubelet, containerd, conectividade
+     * Valida IAM role e acesso ao control plane
+   - Documentação completa em TROUBLESHOOTING.md: Seção "EKS Orphan Nodes"
+     * Sintomas, causas comuns, diagnóstico manual
+     * Exemplo real de resolução (i-0a4427835cdae5d85)
+
+✅ BUG FIXES (100%)
+   - DX01 tests.yml: Removido job terraform-tests inválido
+     * Diretório ./terraform não existe no repo DX01
+     * Terraform tests pertencem ao repo TX01 (infraestrutura)
+     * Fix resolveu 7 falhas consecutivas (4 de Dezembro)
+   - TX01 observability workflow: Removida lógica de auto-scaling
+     * Era cause de timeouts e deploy failures
+     * Substituída por validação estrita de capacidade
+
+✅ INCIDENT RESOLUTION - EKS ORPHAN NODE (100%)
+   - Problema: Instância i-0a4427835cdae5d85 não juntou ao cluster
+   - Diagnóstico: 8 EC2 running, mas apenas 7 Kubernetes nodes
+   - Node: IP 10.0.10.241, launched 2025-12-05 21:25:20
+   - Root Cause: SSM Agent não respondendo, bootstrap falhou
+   - Solução: Instância terminada, ASG criou replacement automaticamente
+   - Prevenção: Scripts de troubleshooting e documentação criados
 
 ================================================================================
 COMPONENTES IMPLEMENTADOS
@@ -230,10 +284,19 @@ MELHORIAS FUTURAS:
   - SSL/TLS com ACM
   - S3 backend para Terraform state
   - DynamoDB para state locking
-  - Auto Scaling Groups
-  - RDS Database
-  - CloudFront CDN
-  - ECS/Fargate migration
+  - Multi-region failover
+  - Enhanced monitoring com Grafana alerts
+  - Cost optimization automation
+
+LIÇÕES APRENDIDAS (2025-12-05):
+  - t3.micro nodes limitados a 4 pods cada (ENI limitation)
+  - Orphan nodes requerem terminação se SSM Agent falhar
+  - Free tier requer alocações ultra-minimais de recursos
+  - Observability stack deve usar ephemeral storage quando possível
+  - Auto-scaling agressivo causa timeouts em workflows
+  - Validação de capacidade deve ocorrer antes de deploy
+  - SSM Agent é crítico para troubleshooting de nodes
+  - ASG replacement é mais confiável que debug de orphan nodes
 
 ================================================================================
 VALIDAÇÃO TÉCNICA
@@ -261,6 +324,14 @@ Docker:
   ✅ Alpine Linux otimizado
   ✅ Security headers
   ✅ Health checks
+
+EKS Cluster (STG):
+  ✅ Kubernetes 1.32
+  ✅ 7x t3.micro nodes (Free Tier optimized)
+  ✅ Auto Scaling Group (desired=8, min=4, max=15)
+  ✅ EBS CSI Driver addon instalado
+  ✅ Observability stack pronto para deploy
+  ✅ Troubleshooting automation implementado
   ✅ Logging configurado
 
 AWS:

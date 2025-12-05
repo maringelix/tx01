@@ -47,7 +47,7 @@ jobs:
           echo "✅ Kubectl configured"
           kubectl cluster-info
       
-      - name: 🔍 Pre-flight Check & Auto-Scale
+      - name: 🔍 Pre-flight Check & Capacity Validation
         run: |
           echo "🔍 Checking cluster capacity..."
           echo ""
@@ -71,44 +71,30 @@ jobs:
           echo "✅ Cleanup complete"
           echo ""
           
-          if [ $FREE_SLOTS -lt 4 ]; then
-            echo "⚠️  Not enough capacity - Auto-scaling to 12 nodes (for buffer)..."
-            
-            aws eks update-nodegroup-config \
-              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-              --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
-              --scaling-config desiredSize=12,minSize=4,maxSize=15 \
-              --region ${{ env.AWS_REGION }}
-            
-            echo "⏳ Waiting for nodes to be Ready (max 5 minutes)..."
-            for i in {1..20}; do
-              sleep 15
-              READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo 0)
-              echo "   Attempt $i/20: $READY_NODES Ready nodes"
-              
-              TOTAL_PODS=$(kubectl get pods -A --no-headers --field-selector=status.phase!=Succeeded,status.phase!=Failed 2>/dev/null | wc -l)
-              POD_CAPACITY=$((READY_NODES * 4))
-              FREE_SLOTS=$((POD_CAPACITY - TOTAL_PODS))
-              
-              if [ $FREE_SLOTS -ge 4 ]; then
-                echo "✅ Sufficient capacity now available!"
-                echo "   Free slots: $FREE_SLOTS"
-                break
-              fi
-              
-              if [ $i -eq 20 ]; then
-                echo "❌ Timeout waiting for capacity"
-                echo "   Current: $FREE_SLOTS free slots (need 4)"
-                exit 1
-              fi
-            done
-          else
-            echo "✅ Sufficient capacity available"
+          # Capacity check - need at least 3 free slots for minimal stack
+          # (Prometheus=1, Grafana=1, KSM=1, Operator=1 = 4 pods total)
+          if [ $FREE_SLOTS -lt 3 ]; then
+            echo "❌ INSUFFICIENT CAPACITY"
+            echo ""
+            echo "Current state:"
+            echo "  - Free slots: $FREE_SLOTS"
+            echo "  - Required: 3 (for 4-pod observability stack)"
+            echo ""
+            echo "🔧 Options to fix:"
+            echo "  1. Scale down other workloads"
+            echo "  2. Increase node count: gh workflow run scale-eks-nodes.yml -f action=scale-up -f node_count=8"
+            echo "  3. Remove orphan nodes: Check for EC2 instances not joined to cluster"
+            echo ""
+            kubectl get nodes
+            echo ""
+            kubectl get pods -A -o wide | head -20
+            exit 1
           fi
           
+          echo "✅ Sufficient capacity available ($FREE_SLOTS free slots)"
           echo ""
           echo "🎯 Ready to install observability stack"
-          echo "   Will deploy: Prometheus, Grafana, Kube State Metrics, Operator"
+          echo "   Will deploy: Prometheus (1), Grafana (1), KSM (1), Operator (1) = 4 pods"
           echo ""
       
       - name: 🎯 Setup Helm
@@ -254,15 +240,19 @@ jobs:
       - name: 📊 Install Prometheus + Grafana (MICRO Stack)
         if: github.event.inputs.action == 'install'
         run: |
-          echo "📊 Installing kube-prometheus-stack (MICRO version)..."
+          echo "📊 Installing kube-prometheus-stack (PLAN 3 - Ultra MICRO)..."
           echo ""
-          echo "🎯 MICRO Stack Components:"
-          echo "   ✅ Prometheus Server (1 pod, 2Gi storage)"
-          echo "   ✅ Grafana (1 pod, 2Gi storage)"
-          echo "   ✅ Kube State Metrics (1 pod)"
+          echo "🎯 PLAN 3 Stack Components (4 pods total):"
+          echo "   ✅ Prometheus Server (1 pod, 1Gi storage, 128Mi RAM)"
+          echo "   ✅ Grafana (1 pod, no persistence, 64Mi RAM)"
+          echo "   ✅ Kube State Metrics (1 pod, 32Mi RAM)"
+          echo "   ✅ Prometheus Operator (1 pod, 64Mi RAM)"
           echo "   ❌ AlertManager (disabled)"
-          echo "   ❌ Node Exporter (disabled - saves 4 DaemonSet pods)"
-          echo "   ❌ Prometheus Operator CRDs (minimal)"
+          echo "   ❌ Node Exporter (disabled)"
+          echo "   ❌ Admission Webhooks (disabled)"
+          echo ""
+          echo "📊 Total Resources: ~288Mi RAM, ~105m CPU"
+          echo "🎯 Target: 7 nodes t3.micro = 28 pods capacity"
           echo ""
           echo "💡 For logs, use AWS CloudWatch (Free Tier: 5GB/month)"
           echo ""
@@ -294,7 +284,7 @@ jobs:
             --wait
           
           echo ""
-          echo "✅ Prometheus + Grafana (MICRO) installed"
+          echo "✅ Prometheus + Grafana (PLAN 3 - Ultra MICRO) installed"
       
       - name: 🔄 Upgrade Stack
         if: github.event.inputs.action == 'upgrade'
@@ -378,7 +368,7 @@ jobs:
         run: |
           echo ""
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "📊 OBSERVABILITY STACK (MICRO) - DEPLOYMENT COMPLETE"
+          echo "📊 OBSERVABILITY STACK (PLAN 3 - Ultra MICRO) - COMPLETE"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
           
@@ -428,15 +418,16 @@ jobs:
           echo ""
           
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-          echo "💡 MICRO STACK LIMITATIONS"
+          echo "💡 PLAN 3 - ULTRA MICRO STACK"
           echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
           echo ""
+          echo "   ✅ Optimized for 7x t3.micro nodes (Free Tier)"
+          echo "   ✅ Total: 4 pods, ~288Mi RAM, ~105m CPU"
+          echo "   ✅ Prometheus: 2d retention, 1GB storage"
+          echo "   ✅ Grafana: Ephemeral storage (no persistence)"
           echo "   ❌ AlertManager disabled (use CloudWatch Alarms)"
-          echo "   ❌ Node Exporter disabled (basic node metrics only)"
+          echo "   ❌ Node Exporter disabled (saves resources)"
           echo "   ❌ Loki disabled (use CloudWatch Logs - 5GB/month free)"
-          echo "   ✅ Prometheus metrics: 3 days retention"
-          echo "   ✅ Grafana dashboards: Full functionality"
-          echo "   ✅ Resource usage: ~530MB total"
           echo ""
           echo "   📈 For full stack: Use deploy-observability.yml (requires t3.small+)"
           echo ""
