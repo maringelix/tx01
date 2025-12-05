@@ -110,10 +110,10 @@ resource "aws_launch_template" "eks_nodes" {
 resource "aws_eks_node_group" "main" {
   count = var.enable_eks ? 1 : 0
   
-  cluster_name    = aws_eks_cluster.main[0].name
-  node_group_name = "${var.project_name}-ng-${var.environment}"
-  node_role_arn   = aws_iam_role.eks_node[0].arn
-  subnet_ids      = aws_subnet.private[*].id
+  cluster_name         = aws_eks_cluster.main[0].name
+  node_group_name_prefix = "${var.project_name}-ng-${var.environment}-"
+  node_role_arn        = aws_iam_role.eks_node[0].arn
+  subnet_ids           = aws_subnet.private[*].id
 
   scaling_config {
     desired_size = var.eks_node_desired_size
