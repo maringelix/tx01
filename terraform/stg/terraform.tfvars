@@ -11,9 +11,9 @@ enable_waf         = true
 # EKS Configuration
 enable_eks              = true  # Set to false to disable EKS
 eks_node_instance_type  = "t3.micro"  # Free Tier (2 vCPU, 1GB RAM) - will optimize workloads
-eks_node_desired_size   = 7  # Scaled for observability + gatekeeper (28 pod capacity)
+eks_node_desired_size   = 8  # Scaled for observability + gatekeeper + margin (32 pod capacity)
 eks_node_min_size       = 4
-eks_node_max_size       = 7
+eks_node_max_size       = 8
 
 # IAM User for EKS Access
 iam_user_arn  = "arn:aws:iam::894222083614:user/devops-tx01"
