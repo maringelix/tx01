@@ -241,6 +241,21 @@ jobs:
           echo "💡 For logs, use AWS CloudWatch (Free Tier: 5GB/month)"
           echo ""
           
+          # Increase kubectl timeout
+          export KUBECTL_TIMEOUT=120s
+          
+          # Verify cluster connectivity with retry
+          echo "🔍 Verifying cluster connectivity..."
+          for i in {1..3}; do
+            if kubectl cluster-info --request-timeout=30s; then
+              echo "✅ Cluster is reachable"
+              break
+            else
+              echo "⚠️  Attempt $i/3 failed, retrying in 10s..."
+              sleep 10
+            fi
+          done
+          
           helm upgrade --install kube-prometheus-stack \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
@@ -249,7 +264,8 @@ jobs:
             --set grafana.adminPassword=${{ secrets.GRAFANA_PASSWORD }} \
             --set prometheus-node-exporter.enabled=false \
             --set nodeExporter.enabled=false \
-            --wait --timeout=15m
+            --timeout=20m \
+            --wait
           
           echo ""
           echo "✅ Prometheus + Grafana (MICRO) installed"
