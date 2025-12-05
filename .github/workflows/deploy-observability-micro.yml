@@ -52,21 +52,22 @@ jobs:
           echo "🔍 Checking cluster capacity..."
           echo ""
           
-          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
-          TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
-          POD_CAPACITY=$((NODE_COUNT * 4))
+          NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | grep -c "Ready" || echo 0)
+          READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo 0)
+          TOTAL_PODS=$(kubectl get pods -A --no-headers --field-selector=status.phase!=Succeeded,status.phase!=Failed 2>/dev/null | wc -l)
+          POD_CAPACITY=$((READY_NODES * 4))
           FREE_SLOTS=$((POD_CAPACITY - TOTAL_PODS))
           
           echo "📊 Cluster Status:"
-          echo "   Nodes: $NODE_COUNT"
-          echo "   Total pods: $TOTAL_PODS"
+          echo "   Nodes Ready: $READY_NODES/$NODE_COUNT"
+          echo "   Total pods (Running+Pending): $TOTAL_PODS"
           echo "   Pod capacity: $POD_CAPACITY"
           echo "   Free slots: $FREE_SLOTS"
           echo ""
           
-          if [ $NODE_COUNT -lt 6 ]; then
-            echo "⚠️  WARNING: Recommended 6 nodes for observability stack"
-            echo "   Current: $NODE_COUNT nodes"
+          if [ $READY_NODES -lt 6 ]; then
+            echo "⚠️  WARNING: Recommended 10 nodes for observability stack"
+            echo "   Current: $READY_NODES Ready nodes"
             echo "   This may cause pod scheduling issues"
             echo ""
           fi
@@ -76,8 +77,8 @@ jobs:
             echo "   Required: 4 pods (Prometheus, Grafana, Kube State Metrics, Operator)"
             echo "   Available: $FREE_SLOTS slots"
             echo ""
-            echo "💡 Solution: Scale nodes to 9 temporarily:"
-            echo "   kubectl scale nodegroup --cluster tx01-eks-stg --nodegroup tx01-ng-stg --desired-size 9"
+            echo "💡 Solution: Scale nodes to 10 temporarily:"
+            echo "   aws eks update-nodegroup-config --cluster-name tx01-eks-stg --nodegroup-name tx01-ng-stg --scaling-config desiredSize=10"
             exit 1
           fi
           
