@@ -71,8 +71,18 @@ jobs:
         if [ -n "$CLUSTER_NAME" ]; then
           echo "📉 Scaling down EKS deployment..."
           aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }}
-          kubectl scale deployment tx01-app --replicas=0 || echo "Deployment not found or already scaled down"
-          echo "✅ EKS deployment scaled to 0"
+          
+          CURRENT_REPLICAS=$(kubectl get deployment tx01-app -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+          echo "   Current replicas: $CURRENT_REPLICAS"
+          
+          if [ "$CURRENT_REPLICAS" != "0" ]; then
+            kubectl scale deployment tx01-app --replicas=0
+            echo "   Waiting for pods to terminate..."
+            kubectl wait --for=delete pod -l app=tx01 --timeout=60s 2>/dev/null || true
+          fi
+          
+          echo "✅ EKS deployment scaled to 0 (no app pods running)"
+          echo "   Note: System pods (ALB Controller, CoreDNS, etc) remain active"
           echo ""
         fi
         
@@ -126,12 +136,24 @@ jobs:
         kubectl get deployment tx01-app -o wide || echo "Deployment not found"
         echo ""
         
+        # Check if HPA exists and get target replicas
+        HPA_EXISTS=$(kubectl get hpa tx01-hpa --ignore-not-found -o name)
+        
+        if [ -n "$HPA_EXISTS" ]; then
+          echo "⚠️  HPA detected - it will manage replicas automatically"
+          TARGET_REPLICAS=$(kubectl get hpa tx01-hpa -o jsonpath='{.spec.minReplicas}')
+          echo "   HPA minReplicas: $TARGET_REPLICAS"
+        else
+          echo "ℹ️  No HPA found - using manual scaling (t3.micro mode)"
+          TARGET_REPLICAS=1
+        fi
+        
         # Scale up deployment
-        echo "📈 Scaling up EKS deployment to 2 replicas..."
-        kubectl scale deployment tx01-app --replicas=2
+        echo "📈 Scaling up EKS deployment to $TARGET_REPLICAS replica(s)..."
+        kubectl scale deployment tx01-app --replicas=$TARGET_REPLICAS
         
         echo "⏳ Waiting for pods to be ready (timeout: 5 minutes)..."
-        kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s
+        kubectl wait --for=condition=ready pod -l app=tx01 --timeout=300s || echo "⚠️ Timeout waiting for pods (may still be starting)"
         
         echo "✅ Pods are ready"
         echo ""
@@ -140,6 +162,22 @@ jobs:
         echo "📋 Pods status:"
         kubectl get pods -l app=tx01 -o wide
         echo ""
+        
+        # Check pod capacity (especially for t3.micro)
+        echo "📊 Cluster pod capacity:"
+        TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
+        NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+        echo "   Total pods running: $TOTAL_PODS"
+        echo "   Total nodes: $NODE_COUNT"
+        echo ""
+        
+        # Warning for high pod density
+        if [ $TOTAL_PODS -ge 14 ]; then
+          echo "⚠️  WARNING: High pod density detected ($TOTAL_PODS pods)"
+          echo "   t3.micro supports max 4 pods/node (16 total for 4 nodes)"
+          echo "   Consider scaling nodes or upgrading to t3.small if adding more workloads"
+          echo ""
+        fi
         
         # Check Ingress status
         echo "📋 Ingress status:"
@@ -200,9 +238,20 @@ jobs:
             echo "Note: EC2 instances serve traffic via existing ALB"
             ;;
           eks)
+            # Get actual pod count
+            CLUSTER_NAME=$(aws eks list-clusters --region ${{ env.AWS_REGION }} --query "clusters[?contains(@, 'tx01-eks-${{ inputs.environment }}')]" --output text)
+            aws eks update-kubeconfig --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} 2>/dev/null
+            APP_PODS=$(kubectl get pods -l app=tx01 --no-headers 2>/dev/null | wc -l || echo "1")
+            
             echo "💤 EC2 instances: Stopped"
-            echo "✅ EKS cluster: Active (2 pods running)"
-            echo "💰 Estimated cost: ~\$138/month (EKS control plane + nodes)"
+            echo "✅ EKS cluster: Active ($APP_PODS app pod(s) running)"
+            echo "💰 Estimated cost: ~\$73/month (EKS \$73 + 4x t3.micro Free Tier)"
+            echo ""
+            echo "Configuration:"
+            echo "   - Instance type: t3.micro (1GB RAM, 2 vCPU)"
+            echo "   - Nodes: 4 (max 4 pods/node = 16 total capacity)"
+            echo "   - HPA: $(kubectl get hpa tx01-hpa --ignore-not-found -o name 2>/dev/null | grep -q hpa && echo 'Enabled' || echo 'Disabled (t3.micro mode)')"
+            echo "   - Metrics Server: $(kubectl get deployment metrics-server -n kube-system --ignore-not-found -o name 2>/dev/null | grep -q metrics && echo 'Enabled' || echo 'Disabled (t3.micro mode)')"
             echo ""
             echo "Note: EKS pods serve traffic via ALB Ingress Controller"
             echo "      The Ingress Controller automatically manages routing"
