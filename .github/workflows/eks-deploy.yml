@@ -144,7 +144,24 @@ jobs:
           --selector=app.kubernetes.io/name=aws-load-balancer-controller \
           --timeout=180s
 
+    - name: Check if Metrics Server should be installed
+      id: check-metrics
+      run: |
+        # Get instance type from Terraform tfvars
+        INSTANCE_TYPE=$(grep "eks_node_instance_type" terraform/${{ inputs.environment }}/terraform.tfvars | awk -F'"' '{print $2}')
+        echo "instance_type=$INSTANCE_TYPE" >> $GITHUB_OUTPUT
+        
+        # Skip metrics server for t3.micro due to pod density limitations
+        if [ "$INSTANCE_TYPE" == "t3.micro" ]; then
+          echo "should_install=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Skipping Metrics Server installation for t3.micro (pod density constraints)"
+        else
+          echo "should_install=true" >> $GITHUB_OUTPUT
+          echo "✅ Will install Metrics Server for $INSTANCE_TYPE"
+        fi
+
     - name: Install Metrics Server
+      if: steps.check-metrics.outputs.should_install == 'true'
       run: |
         kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
         
@@ -275,7 +292,22 @@ jobs:
 
         envsubst < k8s/ingress.yaml | kubectl apply -f -
 
+    - name: Check if HPA should be deployed
+      id: check-hpa
+      run: |
+        # Check if metrics-server is running
+        METRICS_SERVER=$(kubectl get deployment metrics-server -n kube-system --ignore-not-found -o name)
+        
+        if [ -z "$METRICS_SERVER" ]; then
+          echo "should_deploy=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Skipping HPA deployment (Metrics Server not available for t3.micro)"
+        else
+          echo "should_deploy=true" >> $GITHUB_OUTPUT
+          echo "✅ Will deploy HPA (Metrics Server available)"
+        fi
+
     - name: Deploy HPA
+      if: steps.check-hpa.outputs.should_deploy == 'true'
       run: kubectl apply -f k8s/hpa.yaml
 
     - name: Wait for deployment
