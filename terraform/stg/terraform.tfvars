@@ -4,7 +4,7 @@ aws_region         = "us-east-1"
 project_name       = "tx01"
 vpc_cidr           = "10.0.0.0/16"
 instance_type      = "t3.micro"  # Free Tier eligible (t2.micro is deprecated)
-instance_count     = 2
+instance_count     = 0  # EC2s disabled (using EKS only)
 docker_image_tag   = "latest"
 enable_waf         = true
 
