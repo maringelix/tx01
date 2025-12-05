@@ -10,7 +10,7 @@ enable_waf         = true
 
 # EKS Configuration
 enable_eks              = true  # Set to false to disable EKS
-eks_node_instance_type  = "t3.medium"  # 2 vCPU, 4GB RAM (compromise between cost and resources)
+eks_node_instance_type  = "t3.micro"  # Free Tier (2 vCPU, 1GB RAM) - will optimize workloads
 eks_node_desired_size   = 2
 eks_node_min_size       = 1
 eks_node_max_size       = 4
