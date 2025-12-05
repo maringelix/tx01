@@ -71,18 +71,18 @@ jobs:
             echo ""
           fi
           
-          if [ $FREE_SLOTS -lt 3 ]; then
+          if [ $FREE_SLOTS -lt 4 ]; then
             echo "❌ ERROR: Not enough free pod slots!"
-            echo "   Required: 3 pods (Prometheus, Grafana, Kube State Metrics)"
+            echo "   Required: 4 pods (Prometheus, Grafana, Kube State Metrics, Operator)"
             echo "   Available: $FREE_SLOTS slots"
             echo ""
-            echo "💡 Solution: Scale nodes to 6 with:"
-            echo "   Update terraform/stg/terraform.tfvars: eks_node_desired_size = 6"
+            echo "💡 Solution: Scale nodes to 9 temporarily:"
+            echo "   kubectl scale nodegroup --cluster tx01-eks-stg --nodegroup tx01-ng-stg --desired-size 9"
             exit 1
           fi
           
           echo "✅ Sufficient capacity available"
-          echo "   Will install 3 pods (Prometheus, Grafana, Kube State Metrics)"
+          echo "   Will install 4 pods (Prometheus, Grafana, Kube State Metrics, Operator)"
           echo ""
       
       - name: 🎯 Setup Helm
