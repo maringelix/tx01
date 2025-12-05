@@ -47,7 +47,7 @@ jobs:
           echo "✅ Kubectl configured"
           kubectl cluster-info
       
-      - name: 🔍 Pre-flight Check
+      - name: 🔍 Pre-flight Check & Auto-Scale
         run: |
           echo "🔍 Checking cluster capacity..."
           echo ""
@@ -65,25 +65,44 @@ jobs:
           echo "   Free slots: $FREE_SLOTS"
           echo ""
           
-          if [ $READY_NODES -lt 6 ]; then
-            echo "⚠️  WARNING: Recommended 10 nodes for observability stack"
-            echo "   Current: $READY_NODES Ready nodes"
-            echo "   This may cause pod scheduling issues"
-            echo ""
-          fi
-          
           if [ $FREE_SLOTS -lt 4 ]; then
-            echo "❌ ERROR: Not enough free pod slots!"
-            echo "   Required: 4 pods (Prometheus, Grafana, Kube State Metrics, Operator)"
-            echo "   Available: $FREE_SLOTS slots"
-            echo ""
-            echo "💡 Solution: Scale nodes to 10 temporarily:"
-            echo "   aws eks update-nodegroup-config --cluster-name tx01-eks-stg --nodegroup-name tx01-ng-stg --scaling-config desiredSize=10"
-            exit 1
+            echo "⚠️  Not enough capacity - Auto-scaling to 10 nodes..."
+            
+            aws eks update-nodegroup-config \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
+              --scaling-config desiredSize=10,minSize=4,maxSize=10 \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "⏳ Waiting for nodes to be Ready (max 5 minutes)..."
+            for i in {1..20}; do
+              sleep 15
+              READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo 0)
+              echo "   Attempt $i/20: $READY_NODES Ready nodes"
+              
+              TOTAL_PODS=$(kubectl get pods -A --no-headers --field-selector=status.phase!=Succeeded,status.phase!=Failed 2>/dev/null | wc -l)
+              POD_CAPACITY=$((READY_NODES * 4))
+              FREE_SLOTS=$((POD_CAPACITY - TOTAL_PODS))
+              
+              if [ $FREE_SLOTS -ge 4 ]; then
+                echo "✅ Sufficient capacity now available!"
+                echo "   Free slots: $FREE_SLOTS"
+                break
+              fi
+              
+              if [ $i -eq 20 ]; then
+                echo "❌ Timeout waiting for capacity"
+                echo "   Current: $FREE_SLOTS free slots (need 4)"
+                exit 1
+              fi
+            done
+          else
+            echo "✅ Sufficient capacity available"
           fi
           
-          echo "✅ Sufficient capacity available"
-          echo "   Will install 4 pods (Prometheus, Grafana, Kube State Metrics, Operator)"
+          echo ""
+          echo "🎯 Ready to install observability stack"
+          echo "   Will deploy: Prometheus, Grafana, Kube State Metrics, Operator"
           echo ""
       
       - name: 🎯 Setup Helm
