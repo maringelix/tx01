@@ -1,0 +1,411 @@
+name: 📊 Deploy Observability Stack (MICRO - Free Tier Optimized)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - install
+          - uninstall
+          - upgrade
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  deploy-observability-micro:
+    name: 📈 ${{ github.event.inputs.action }} Observability Stack (MICRO)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: ☸️ Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name tx01-eks-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Kubectl configured"
+          kubectl cluster-info
+      
+      - name: 🔍 Pre-flight Check
+        run: |
+          echo "🔍 Checking cluster capacity..."
+          echo ""
+          
+          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+          TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
+          POD_CAPACITY=$((NODE_COUNT * 4))
+          FREE_SLOTS=$((POD_CAPACITY - TOTAL_PODS))
+          
+          echo "📊 Cluster Status:"
+          echo "   Nodes: $NODE_COUNT"
+          echo "   Total pods: $TOTAL_PODS"
+          echo "   Pod capacity: $POD_CAPACITY"
+          echo "   Free slots: $FREE_SLOTS"
+          echo ""
+          
+          if [ $NODE_COUNT -lt 6 ]; then
+            echo "⚠️  WARNING: Recommended 6 nodes for observability stack"
+            echo "   Current: $NODE_COUNT nodes"
+            echo "   This may cause pod scheduling issues"
+            echo ""
+          fi
+          
+          if [ $FREE_SLOTS -lt 3 ]; then
+            echo "❌ ERROR: Not enough free pod slots!"
+            echo "   Required: 3 pods (Prometheus, Grafana, Kube State Metrics)"
+            echo "   Available: $FREE_SLOTS slots"
+            echo ""
+            echo "💡 Solution: Scale nodes to 6 with:"
+            echo "   Update terraform/stg/terraform.tfvars: eks_node_desired_size = 6"
+            exit 1
+          fi
+          
+          echo "✅ Sufficient capacity available"
+          echo "   Will install 3 pods (Prometheus, Grafana, Kube State Metrics)"
+          echo ""
+      
+      - name: 🎯 Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.13.0'
+      
+      - name: 📦 Add Helm Repositories
+        run: |
+          echo "📦 Adding Helm repositories..."
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+          echo "✅ Repositories added and updated"
+      
+      - name: 📁 Create Monitoring Namespace
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📁 Creating monitoring namespace..."
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace ready"
+      
+      - name: 🔐 Validate Grafana Password Secret
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          echo "🔐 Validating GRAFANA_PASSWORD secret..."
+          
+          if [ -z "${{ secrets.GRAFANA_PASSWORD }}" ]; then
+            echo "❌ ERROR: GRAFANA_PASSWORD secret is not configured!"
+            echo ""
+            echo "📝 To configure it:"
+            echo "   1. Go to: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            echo "   2. Click 'New repository secret'"
+            echo "   3. Name: GRAFANA_PASSWORD"
+            echo "   4. Value: <your-strong-password>"
+            echo ""
+            echo "⚠️  Use a strong password for production environments!"
+            exit 1
+          fi
+          
+          PASSWORD_LENGTH=$(echo -n "${{ secrets.GRAFANA_PASSWORD }}" | wc -c)
+          if [ $PASSWORD_LENGTH -lt 8 ]; then
+            echo "⚠️  WARNING: Password is too short (less than 8 characters)"
+            echo "📝 Consider using a stronger password for production"
+          fi
+          
+          echo "✅ GRAFANA_PASSWORD secret is configured (length: $PASSWORD_LENGTH chars)"
+          echo "🔒 Password will be securely applied to Grafana deployment"
+      
+      - name: 🔌 Ensure EBS CSI Driver is installed
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🔍 Checking EBS CSI Driver addon..."
+          
+          ADDON_STATUS=$(aws eks describe-addon \
+            --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+            --addon-name aws-ebs-csi-driver \
+            --region ${{ env.AWS_REGION }} \
+            --query 'addon.status' \
+            --output text 2>/dev/null || echo "NOT_FOUND")
+          
+          if [ "$ADDON_STATUS" = "NOT_FOUND" ]; then
+            echo "⚠️  EBS CSI Driver not found, installing..."
+            
+            # Check if IAM role exists
+            ROLE_EXISTS=$(aws iam get-role \
+              --role-name tx01-eks-ebs-csi-driver \
+              --query 'Role.RoleName' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+            
+            if [ "$ROLE_EXISTS" = "NOT_FOUND" ]; then
+              echo "Creating IAM role for EBS CSI Driver..."
+              
+              # Get OIDC provider
+              OIDC_ID=$(aws eks describe-cluster \
+                --name tx01-eks-${{ github.event.inputs.environment }} \
+                --region ${{ env.AWS_REGION }} \
+                --query 'cluster.identity.oidc.issuer' \
+                --output text | cut -d '/' -f 5)
+              
+              ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+              
+              # Create trust policy
+              cat > trust-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Principal": {
+                "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}"
+              },
+              "Action": "sts:AssumeRoleWithWebIdentity",
+              "Condition": {
+                "StringEquals": {
+                  "oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com",
+                  "oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+                }
+              }
+            }]
+          }
+          EOF
+              
+              # Create role
+              aws iam create-role \
+                --role-name tx01-eks-ebs-csi-driver \
+                --assume-role-policy-document file://trust-policy.json
+              
+              # Attach policy
+              aws iam attach-role-policy \
+                --role-name tx01-eks-ebs-csi-driver \
+                --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
+              
+              echo "✅ IAM role created"
+            else
+              echo "✅ IAM role already exists"
+            fi
+            
+            # Install addon
+            aws eks create-addon \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --addon-name aws-ebs-csi-driver \
+              --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/tx01-eks-ebs-csi-driver \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "⏳ Waiting for addon to be ACTIVE..."
+            aws eks wait addon-active \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --addon-name aws-ebs-csi-driver \
+              --region ${{ env.AWS_REGION }}
+            
+            echo "✅ EBS CSI Driver installed"
+          elif [ "$ADDON_STATUS" = "ACTIVE" ]; then
+            echo "✅ EBS CSI Driver already active"
+          else
+            echo "⚠️  EBS CSI Driver status: $ADDON_STATUS"
+            echo "Waiting for it to become ACTIVE..."
+            aws eks wait addon-active \
+              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
+              --addon-name aws-ebs-csi-driver \
+              --region ${{ env.AWS_REGION }}
+            echo "✅ EBS CSI Driver is now active"
+          fi
+      
+      - name: 📊 Install Prometheus + Grafana (MICRO Stack)
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📊 Installing kube-prometheus-stack (MICRO version)..."
+          echo ""
+          echo "🎯 MICRO Stack Components:"
+          echo "   ✅ Prometheus Server (1 pod, 2Gi storage)"
+          echo "   ✅ Grafana (1 pod, 2Gi storage)"
+          echo "   ✅ Kube State Metrics (1 pod)"
+          echo "   ❌ AlertManager (disabled)"
+          echo "   ❌ Node Exporter (disabled - saves 4 DaemonSet pods)"
+          echo "   ❌ Prometheus Operator CRDs (minimal)"
+          echo ""
+          echo "💡 For logs, use AWS CloudWatch (Free Tier: 5GB/month)"
+          echo ""
+          
+          helm upgrade --install kube-prometheus-stack \
+            prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --set prometheus.prometheusSpec.retention=3d \
+            --set prometheus.prometheusSpec.retentionSize=1500MB \
+            --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=gp2 \
+            --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=2Gi \
+            --set prometheus.prometheusSpec.resources.requests.memory=256Mi \
+            --set prometheus.prometheusSpec.resources.requests.cpu=100m \
+            --set prometheus.prometheusSpec.resources.limits.memory=512Mi \
+            --set prometheus.prometheusSpec.resources.limits.cpu=200m \
+            --set grafana.adminPassword=${{ secrets.GRAFANA_PASSWORD }} \
+            --set grafana.persistence.enabled=true \
+            --set grafana.persistence.storageClassName=gp2 \
+            --set grafana.persistence.size=2Gi \
+            --set grafana.service.type=LoadBalancer \
+            --set grafana.resources.requests.memory=100Mi \
+            --set grafana.resources.requests.cpu=50m \
+            --set grafana.resources.limits.memory=200Mi \
+            --set grafana.resources.limits.cpu=100m \
+            --set alertmanager.enabled=false \
+            --set prometheus-node-exporter.enabled=false \
+            --set kubeStateMetrics.enabled=true \
+            --set kubeStateMetrics.resources.requests.memory=64Mi \
+            --set kubeStateMetrics.resources.requests.cpu=10m \
+            --set kubeStateMetrics.resources.limits.memory=128Mi \
+            --set kubeStateMetrics.resources.limits.cpu=50m \
+            --wait --timeout=10m
+          
+          echo ""
+          echo "✅ Prometheus + Grafana (MICRO) installed"
+      
+      - name: 🔄 Upgrade Stack
+        if: github.event.inputs.action == 'upgrade'
+        run: |
+          echo "🔄 Upgrading observability stack (MICRO)..."
+          
+          helm upgrade kube-prometheus-stack \
+            prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --reuse-values \
+            --wait --timeout=10m
+          
+          echo "✅ Stack upgraded"
+      
+      - name: 🗑️ Uninstall Stack
+        if: github.event.inputs.action == 'uninstall'
+        run: |
+          echo "🗑️ Uninstalling observability stack (MICRO)..."
+          
+          helm uninstall kube-prometheus-stack -n monitoring || echo "Already uninstalled"
+          
+          echo "⚠️  Namespace 'monitoring' preserved (contains PVCs)"
+          echo "To fully remove: kubectl delete namespace monitoring --grace-period=0 --force"
+          
+          echo "✅ Stack uninstalled"
+      
+      - name: ⏳ Wait for Pods
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          echo "⏳ Waiting for pods to be ready..."
+          
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=prometheus \
+            -n monitoring \
+            --timeout=300s || echo "Prometheus pods not ready yet (may still be starting)"
+          
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=grafana \
+            -n monitoring \
+            --timeout=300s || echo "Grafana pods not ready yet (may still be starting)"
+          
+          kubectl wait --for=condition=ready pod \
+            -l app.kubernetes.io/name=kube-state-metrics \
+            -n monitoring \
+            --timeout=300s || echo "Kube State Metrics not ready yet (may still be starting)"
+          
+          echo "✅ Pods are ready"
+      
+      - name: 📊 Get Grafana URL
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        id: grafana-url
+        run: |
+          echo "📊 Getting Grafana URL..."
+          
+          # Wait for LoadBalancer to be ready
+          sleep 30
+          
+          GRAFANA_URL=$(kubectl get svc -n monitoring kube-prometheus-stack-grafana \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+          
+          if [ "$GRAFANA_URL" = "pending" ] || [ -z "$GRAFANA_URL" ]; then
+            echo "⏳ LoadBalancer is still provisioning..."
+            echo "   Run this command later to get the URL:"
+            echo "   kubectl get svc -n monitoring kube-prometheus-stack-grafana"
+          else
+            echo "grafana_url=$GRAFANA_URL" >> $GITHUB_OUTPUT
+            echo "✅ Grafana URL: http://$GRAFANA_URL"
+          fi
+      
+      - name: 📊 Show Final Status
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 OBSERVABILITY STACK (MICRO) - DEPLOYMENT COMPLETE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          echo "📦 Installed Components:"
+          kubectl get pods -n monitoring -o wide
+          echo ""
+          
+          echo "💾 Storage:"
+          kubectl get pvc -n monitoring
+          echo ""
+          
+          echo "🌐 Services:"
+          kubectl get svc -n monitoring
+          echo ""
+          
+          GRAFANA_URL=$(kubectl get svc -n monitoring kube-prometheus-stack-grafana \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "pending")
+          
+          TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
+          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+          POD_CAPACITY=$((NODE_COUNT * 4))
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 CLUSTER STATUS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   Nodes: $NODE_COUNT"
+          echo "   Pods: $TOTAL_PODS / $POD_CAPACITY"
+          echo "   Free slots: $((POD_CAPACITY - TOTAL_PODS))"
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🎯 ACCESS GRAFANA"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          if [ "$GRAFANA_URL" != "pending" ] && [ -n "$GRAFANA_URL" ]; then
+            echo "   🌐 URL: http://$GRAFANA_URL"
+            echo "   👤 User: admin"
+            echo "   🔒 Password: (from GRAFANA_PASSWORD secret)"
+            echo ""
+            echo "   ⏳ Wait 2-3 minutes for DNS propagation"
+          else
+            echo "   ⏳ LoadBalancer still provisioning..."
+            echo "   Get URL with: kubectl get svc -n monitoring kube-prometheus-stack-grafana"
+          fi
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "💡 MICRO STACK LIMITATIONS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   ❌ AlertManager disabled (use CloudWatch Alarms)"
+          echo "   ❌ Node Exporter disabled (basic node metrics only)"
+          echo "   ❌ Loki disabled (use CloudWatch Logs - 5GB/month free)"
+          echo "   ✅ Prometheus metrics: 3 days retention"
+          echo "   ✅ Grafana dashboards: Full functionality"
+          echo "   ✅ Resource usage: ~530MB total"
+          echo ""
+          echo "   📈 For full stack: Use deploy-observability.yml (requires t3.small+)"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

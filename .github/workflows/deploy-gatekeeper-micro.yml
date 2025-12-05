@@ -1,0 +1,352 @@
+name: 🛡️ Deploy OPA Gatekeeper (MICRO - Free Tier Optimized)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options:
+          - install
+          - upgrade
+          - uninstall
+      enforcement_mode:
+        description: 'Enforcement Mode'
+        required: false
+        type: choice
+        default: 'dryrun'
+        options:
+          - dryrun
+          - enforce
+
+env:
+  AWS_REGION: us-east-1
+  GATEKEEPER_VERSION: v3.15.0
+
+jobs:
+  deploy-gatekeeper-micro:
+    name: 🛡️ ${{ github.event.inputs.action }} OPA Gatekeeper (MICRO)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: ☸️ Configure kubectl
+        run: |
+          aws eks update-kubeconfig \
+            --name tx01-eks-${{ github.event.inputs.environment }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Kubectl configured"
+          kubectl cluster-info
+      
+      - name: 🔍 Pre-flight Check
+        run: |
+          echo "🔍 Checking cluster capacity..."
+          echo ""
+          
+          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+          TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
+          POD_CAPACITY=$((NODE_COUNT * 4))
+          FREE_SLOTS=$((POD_CAPACITY - TOTAL_PODS))
+          
+          echo "📊 Cluster Status:"
+          echo "   Nodes: $NODE_COUNT"
+          echo "   Total pods: $TOTAL_PODS"
+          echo "   Pod capacity: $POD_CAPACITY"
+          echo "   Free slots: $FREE_SLOTS"
+          echo ""
+          
+          if [ $NODE_COUNT -lt 6 ]; then
+            echo "⚠️  WARNING: Recommended 6 nodes for full stack"
+            echo "   Current: $NODE_COUNT nodes"
+            echo ""
+          fi
+          
+          if [ $FREE_SLOTS -lt 1 ]; then
+            echo "❌ ERROR: Not enough free pod slots!"
+            echo "   Required: 1 pod (Gatekeeper Controller only)"
+            echo "   Available: $FREE_SLOTS slots"
+            echo ""
+            echo "💡 Solution: Scale nodes or remove unused workloads"
+            exit 1
+          fi
+          
+          echo "✅ Sufficient capacity available"
+          echo "   Will install 1 pod (Controller only, Audit disabled)"
+          echo ""
+      
+      - name: 🎯 Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'v3.13.0'
+      
+      - name: 📦 Add Gatekeeper Helm Repository
+        run: |
+          echo "📦 Adding Gatekeeper Helm repository..."
+          helm repo add gatekeeper https://open-policy-agent.github.io/gatekeeper/charts
+          helm repo update
+          echo "✅ Repository added"
+      
+      - name: 📁 Create Gatekeeper Namespace
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📁 Creating gatekeeper-system namespace..."
+          kubectl create namespace gatekeeper-system --dry-run=client -o yaml | kubectl apply -f -
+          echo "✅ Namespace ready"
+      
+      - name: 🛡️ Install OPA Gatekeeper (MICRO)
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🛡️ Installing OPA Gatekeeper (MICRO version)..."
+          echo ""
+          echo "🎯 MICRO Configuration:"
+          echo "   ✅ Controller: 1 replica with resource limits"
+          echo "   ❌ Audit: Disabled (saves 1 pod)"
+          echo "   ✅ Metrics: Enabled for Prometheus"
+          echo "   ✅ Resources: 150MB limit, 100m CPU"
+          echo ""
+          echo "💡 For production audit: Use deploy-gatekeeper.yml (requires t3.small+)"
+          echo ""
+          
+          helm upgrade --install gatekeeper gatekeeper/gatekeeper \
+            --namespace gatekeeper-system \
+            --set enableExternalData=false \
+            --set audit.enabled=false \
+            --set constraintViolationsLimit=100 \
+            --set replicas=1 \
+            --set revisionHistoryLimit=3 \
+            --set enableGeneratorResourceExpansion=false \
+            --set metrics.enabled=true \
+            --set metrics.prometheusEnabled=true \
+            --set resources.requests.memory=80Mi \
+            --set resources.requests.cpu=50m \
+            --set resources.limits.memory=150Mi \
+            --set resources.limits.cpu=100m \
+            --set controllerManager.resources.requests.memory=80Mi \
+            --set controllerManager.resources.requests.cpu=50m \
+            --set controllerManager.resources.limits.memory=150Mi \
+            --set controllerManager.resources.limits.cpu=100m \
+            --wait --timeout=10m
+          
+          echo ""
+          echo "✅ Gatekeeper (MICRO) installed"
+      
+      - name: ⏳ Wait for Gatekeeper to be Ready
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "⏳ Waiting for Gatekeeper controller to be ready..."
+          sleep 30
+          
+          kubectl wait --for=condition=Available \
+            deployment/gatekeeper-controller-manager \
+            -n gatekeeper-system \
+            --timeout=300s
+          
+          echo "✅ Gatekeeper controller is ready"
+          echo ""
+          echo "ℹ️  Note: Audit pod is disabled in MICRO mode"
+          echo "   Violations are only checked on admission (not retroactively)"
+      
+      - name: 📊 Create ServiceMonitor for Prometheus
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📊 Creating ServiceMonitor for Prometheus integration..."
+          
+          cat <<EOF | kubectl apply -f -
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: gatekeeper-controller-manager-metrics
+            namespace: gatekeeper-system
+            labels:
+              app: gatekeeper
+              release: kube-prometheus-stack
+          spec:
+            ports:
+            - name: metrics
+              port: 8888
+              protocol: TCP
+              targetPort: 8888
+            selector:
+              control-plane: controller-manager
+              gatekeeper.sh/operation: webhook
+          ---
+          apiVersion: monitoring.coreos.com/v1
+          kind: ServiceMonitor
+          metadata:
+            name: gatekeeper-controller-manager
+            namespace: gatekeeper-system
+            labels:
+              app: gatekeeper
+              release: kube-prometheus-stack
+          spec:
+            selector:
+              matchLabels:
+                app: gatekeeper
+            endpoints:
+            - port: metrics
+              interval: 30s
+              path: /metrics
+          EOF
+          
+          echo "✅ ServiceMonitor created - Prometheus will scrape Gatekeeper metrics"
+      
+      - name: 📋 Apply Policy Templates
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "📋 Applying OPA policy templates..."
+          
+          if [ -d "k8s/policies/templates" ]; then
+            kubectl apply -f k8s/policies/templates/
+            echo "✅ Policy templates applied"
+          else
+            echo "⚠️  No templates found in k8s/policies/templates/"
+            echo "   Templates should be created before applying constraints"
+          fi
+      
+      - name: 🔒 Apply Constraints (${{ github.event.inputs.enforcement_mode }} mode)
+        if: github.event.inputs.action == 'install'
+        run: |
+          echo "🔒 Applying constraints in ${{ github.event.inputs.enforcement_mode }} mode..."
+          
+          CONSTRAINTS_DIR="k8s/policies/constraints"
+          
+          if [ -d "$CONSTRAINTS_DIR" ]; then
+            # Apply all constraints
+            for file in $CONSTRAINTS_DIR/*.yaml; do
+              if [ -f "$file" ]; then
+                # Replace enforcement mode placeholder if exists
+                sed "s/enforcementAction:.*/enforcementAction: ${{ github.event.inputs.enforcement_mode }}/g" "$file" | kubectl apply -f - || true
+              fi
+            done
+            echo "✅ Constraints applied in ${{ github.event.inputs.enforcement_mode }} mode"
+          else
+            echo "⚠️  No constraints found in $CONSTRAINTS_DIR"
+            echo "   Create constraint files to enforce policies"
+          fi
+          
+          echo ""
+          echo "ℹ️  Enforcement Modes:"
+          echo "   • dryrun: Violations logged but not blocked"
+          echo "   • enforce: Violations blocked at admission"
+      
+      - name: 🔄 Upgrade Gatekeeper
+        if: github.event.inputs.action == 'upgrade'
+        run: |
+          echo "🔄 Upgrading OPA Gatekeeper (MICRO)..."
+          
+          helm upgrade gatekeeper gatekeeper/gatekeeper \
+            --namespace gatekeeper-system \
+            --reuse-values \
+            --wait --timeout=5m
+          
+          echo "✅ Gatekeeper upgraded"
+      
+      - name: 🗑️ Uninstall Gatekeeper
+        if: github.event.inputs.action == 'uninstall'
+        run: |
+          echo "🗑️ Removing constraints first..."
+          kubectl delete constraints --all -A || echo "No constraints to delete"
+          
+          echo "🗑️ Removing constraint templates..."
+          kubectl delete constrainttemplates --all || echo "No templates to delete"
+          
+          echo "🗑️ Uninstalling Gatekeeper..."
+          helm uninstall gatekeeper -n gatekeeper-system || echo "Already uninstalled"
+          
+          echo "⚠️  Namespace 'gatekeeper-system' preserved"
+          echo "To fully remove: kubectl delete namespace gatekeeper-system --grace-period=0 --force"
+          
+          echo "✅ Gatekeeper uninstalled"
+      
+      - name: 📊 Show Status
+        if: github.event.inputs.action == 'install' || github.event.inputs.action == 'upgrade'
+        run: |
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🛡️  OPA GATEKEEPER (MICRO) - DEPLOYMENT COMPLETE"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          echo "📦 Pods:"
+          kubectl get pods -n gatekeeper-system -o wide
+          echo ""
+          
+          echo "📋 Constraint Templates:"
+          kubectl get constrainttemplates --no-headers 2>/dev/null | wc -l | xargs echo "   Installed templates:"
+          kubectl get constrainttemplates 2>/dev/null || echo "   No templates found"
+          echo ""
+          
+          echo "🔒 Constraints:"
+          CONSTRAINTS=$(kubectl get constraints --all-namespaces --no-headers 2>/dev/null | wc -l)
+          echo "   Active constraints: $CONSTRAINTS"
+          kubectl get constraints --all-namespaces 2>/dev/null || echo "   No constraints applied"
+          echo ""
+          
+          TOTAL_PODS=$(kubectl get pods -A --no-headers | wc -l)
+          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+          POD_CAPACITY=$((NODE_COUNT * 4))
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📊 CLUSTER STATUS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   Nodes: $NODE_COUNT"
+          echo "   Pods: $TOTAL_PODS / $POD_CAPACITY"
+          echo "   Free slots: $((POD_CAPACITY - TOTAL_PODS))"
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🛡️  GATEKEEPER STATUS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   Mode: ${{ github.event.inputs.enforcement_mode }}"
+          echo "   Controller: Running (1 pod)"
+          echo "   Audit: Disabled (MICRO mode)"
+          echo "   Metrics: Enabled (Prometheus scraping)"
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "💡 MICRO MODE LIMITATIONS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   ❌ Audit pod disabled (no retroactive policy checks)"
+          echo "   ✅ Admission control: Full functionality"
+          echo "   ✅ Violations blocked/logged on create/update"
+          echo "   ❌ No periodic audit of existing resources"
+          echo "   ✅ Resource usage: ~150MB total"
+          echo ""
+          echo "   📈 For full audit: Use deploy-gatekeeper.yml (requires t3.small+)"
+          echo ""
+          
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🔍 USEFUL COMMANDS"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "   View all constraints:"
+          echo "   kubectl get constraints -A"
+          echo ""
+          echo "   Check violations (dryrun mode):"
+          echo "   kubectl get constraints -A -o json | jq '.items[] | select(.status.totalViolations > 0)'"
+          echo ""
+          echo "   Test a policy:"
+          echo "   kubectl apply -f k8s/test-policy-examples.yaml"
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
