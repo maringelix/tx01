@@ -138,6 +138,14 @@
         "ec2:DescribeKeyPairs"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "AutoScalingManagement",
+      "Effect": "Allow",
+      "Action": [
+        "autoscaling:*"
+      ],
+      "Resource": "*"
     }
   ]
 }
