@@ -65,13 +65,19 @@ jobs:
           echo "   Free slots: $FREE_SLOTS"
           echo ""
           
+          # Clean up any orphaned LoadBalancer services first
+          echo "🧹 Cleaning up LoadBalancer services..."
+          kubectl get svc -n monitoring -o json 2>/dev/null | \
+            jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | \
+            xargs -r -I {} kubectl delete svc -n monitoring {} --ignore-not-found=true || echo "No LoadBalancer services found"
+          
           if [ $FREE_SLOTS -lt 4 ]; then
-            echo "⚠️  Not enough capacity - Auto-scaling to 10 nodes..."
+            echo "⚠️  Not enough capacity - Auto-scaling to 12 nodes (for buffer)..."
             
             aws eks update-nodegroup-config \
               --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
               --nodegroup-name tx01-ng-${{ github.event.inputs.environment }} \
-              --scaling-config desiredSize=10,minSize=4,maxSize=10 \
+              --scaling-config desiredSize=12,minSize=4,maxSize=15 \
               --region ${{ env.AWS_REGION }}
             
             echo "⏳ Waiting for nodes to be Ready (max 5 minutes)..."
@@ -294,14 +300,23 @@ jobs:
         if: github.event.inputs.action == 'upgrade'
         run: |
           echo "🔄 Upgrading observability stack (MICRO)..."
+          echo ""
+          echo "🧹 Cleaning LoadBalancer service first..."
+          kubectl delete svc -n monitoring kube-prometheus-stack-grafana --ignore-not-found=true
+          echo ""
           
           helm upgrade kube-prometheus-stack \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
-            --reuse-values \
-            --wait --timeout=10m
+            --values k8s/prometheus-micro-values.yaml \
+            --set grafana.adminPassword=${{ secrets.GRAFANA_PASSWORD }} \
+            --set prometheus-node-exporter.enabled=false \
+            --set nodeExporter.enabled=false \
+            --wait --timeout=15m
           
-          echo "✅ Stack upgraded"
+          echo ""
+          echo "✅ Stack upgraded with ClusterIP service"
+          echo "💡 Access Grafana: kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80"
       
       - name: 🗑️ Uninstall Stack
         if: github.event.inputs.action == 'uninstall'
