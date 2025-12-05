@@ -67,9 +67,9 @@ jobs:
           
           # Clean up any orphaned LoadBalancer services first
           echo "🧹 Cleaning up LoadBalancer services..."
-          kubectl get svc -n monitoring -o json 2>/dev/null | \
-            jq -r '.items[] | select(.spec.type=="LoadBalancer") | .metadata.name' | \
-            xargs -r -I {} kubectl delete svc -n monitoring {} --ignore-not-found=true || echo "No LoadBalancer services found"
+          kubectl delete svc -n monitoring kube-prometheus-stack-grafana --ignore-not-found=true 2>/dev/null || true
+          echo "✅ Cleanup complete"
+          echo ""
           
           if [ $FREE_SLOTS -lt 4 ]; then
             echo "⚠️  Not enough capacity - Auto-scaling to 12 nodes (for buffer)..."
