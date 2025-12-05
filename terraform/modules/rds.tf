@@ -62,8 +62,6 @@ resource "aws_security_group_rule" "rds_from_eks_nodes" {
   source_security_group_id = aws_security_group.eks_nodes[0].id
   description              = "PostgreSQL from EKS worker nodes"
 }
-  description              = "PostgreSQL from EKS cluster"
-}
 
 # Random password for database
 resource "random_password" "db_password" {
