@@ -244,6 +244,8 @@ jobs:
           helm upgrade --install kube-prometheus-stack \
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
+            --create-namespace \
+            --reset-values \
             --set prometheus.prometheusSpec.retention=3d \
             --set prometheus.prometheusSpec.retentionSize=1500MB \
             --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=gp2 \
