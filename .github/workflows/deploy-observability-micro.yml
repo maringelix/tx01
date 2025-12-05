@@ -245,32 +245,9 @@ jobs:
             prometheus-community/kube-prometheus-stack \
             --namespace monitoring \
             --create-namespace \
-            --reset-values \
-            --set prometheus.prometheusSpec.retention=3d \
-            --set prometheus.prometheusSpec.retentionSize=1500MB \
-            --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.storageClassName=gp2 \
-            --set prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage=2Gi \
-            --set prometheus.prometheusSpec.resources.requests.memory=256Mi \
-            --set prometheus.prometheusSpec.resources.requests.cpu=100m \
-            --set prometheus.prometheusSpec.resources.limits.memory=512Mi \
-            --set prometheus.prometheusSpec.resources.limits.cpu=200m \
+            --values k8s/prometheus-micro-values.yaml \
             --set grafana.adminPassword=${{ secrets.GRAFANA_PASSWORD }} \
-            --set grafana.persistence.enabled=true \
-            --set grafana.persistence.storageClassName=gp2 \
-            --set grafana.persistence.size=2Gi \
-            --set grafana.service.type=LoadBalancer \
-            --set grafana.resources.requests.memory=100Mi \
-            --set grafana.resources.requests.cpu=50m \
-            --set grafana.resources.limits.memory=200Mi \
-            --set grafana.resources.limits.cpu=100m \
-            --set alertmanager.enabled=false \
-            --set prometheus-node-exporter.enabled=false \
-            --set kubeStateMetrics.enabled=true \
-            --set kubeStateMetrics.resources.requests.memory=64Mi \
-            --set kubeStateMetrics.resources.requests.cpu=10m \
-            --set kubeStateMetrics.resources.limits.memory=128Mi \
-            --set kubeStateMetrics.resources.limits.cpu=50m \
-            --wait --timeout=10m
+            --wait --timeout=15m
           
           echo ""
           echo "✅ Prometheus + Grafana (MICRO) installed"
