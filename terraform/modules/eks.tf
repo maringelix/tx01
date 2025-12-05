@@ -78,6 +78,34 @@ resource "aws_security_group_rule" "eks_nodes_ingress_cluster" {
   description              = "Allow cluster control plane to communicate with nodes"
 }
 
+# Launch Template for EKS Node Group
+resource "aws_launch_template" "eks_nodes" {
+  count = var.enable_eks ? 1 : 0
+  
+  name_prefix = "${var.project_name}-eks-node-${var.environment}-"
+  description = "Launch template for EKS worker nodes"
+
+  network_interfaces {
+    associate_public_ip_address = false
+    security_groups             = [aws_security_group.eks_nodes[0].id]
+    delete_on_termination       = true
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = merge(
+      var.tags,
+      {
+        Name = "${var.project_name}-eks-node-${var.environment}"
+      }
+    )
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # EKS Node Group
 resource "aws_eks_node_group" "main" {
   count = var.enable_eks ? 1 : 0
@@ -97,6 +125,12 @@ resource "aws_eks_node_group" "main" {
   capacity_type  = "ON_DEMAND" # ou "SPOT" para economizar
   disk_size      = 20
 
+  # Use launch template to attach custom security group
+  launch_template {
+    id      = aws_launch_template.eks_nodes[0].id
+    version = "$Latest"
+  }
+
   update_config {
     max_unavailable = 1
   }
@@ -104,11 +138,6 @@ resource "aws_eks_node_group" "main" {
   labels = {
     Environment = var.environment
     ManagedBy   = "terraform"
-  }
-
-  # Attach node security group
-  remote_access {
-    source_security_group_ids = [aws_security_group.eks_nodes[0].id]
   }
 
   # Force replacement when instance type changes
