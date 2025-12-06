@@ -1,0 +1,660 @@
+name: 🗑️ Destroy AWS Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+      confirmation:
+        description: 'Type "DESTROY" to confirm complete destruction'
+        required: true
+        type: string
+      preserve_ecr_images:
+        description: 'Preserve ECR images (keep Docker images)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: '1.6.0'
+
+jobs:
+  validate-confirmation:
+    name: ✅ Validate Destruction Request
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔒 Validate Confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirmation }}" != "DESTROY" ]; then
+            echo "❌ ERROR: Confirmation word must be exactly 'DESTROY'"
+            echo "   You entered: '${{ github.event.inputs.confirmation }}'"
+            exit 1
+          fi
+          echo "✅ Confirmation validated"
+      
+      - name: 📋 Show Destruction Plan
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "🗑️  COMPLETE ENVIRONMENT DESTRUCTION"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo ""
+          echo "Will destroy:"
+          echo "  ✓ EKS Cluster (tx01-eks-${{ github.event.inputs.environment }})"
+          echo "  ✓ RDS Database (tx01-db-${{ github.event.inputs.environment }})"
+          echo "  ✓ Application Load Balancers"
+          echo "  ✓ NAT Gateways"
+          echo "  ✓ VPC and all networking"
+          echo "  ✓ EC2 Instances"
+          echo "  ✓ EBS Volumes"
+          echo "  ✓ Security Groups"
+          echo "  ✓ IAM Roles (EKS-related)"
+          if [ "${{ github.event.inputs.preserve_ecr_images }}" = "false" ]; then
+            echo "  ✓ ECR Repositories and Images"
+          fi
+          echo ""
+          echo "Will PRESERVE:"
+          echo "  ✓ S3 Terraform State Bucket"
+          echo "  ✓ DynamoDB State Lock Table"
+          if [ "${{ github.event.inputs.preserve_ecr_images }}" = "true" ]; then
+            echo "  ✓ ECR Images"
+          fi
+          echo ""
+          echo "⚠️  THIS ACTION CANNOT BE UNDONE!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  destroy-kubernetes-resources:
+    name: 🗑️ Destroy Kubernetes Resources
+    needs: validate-confirmation
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: ☸️ Configure kubectl
+        run: |
+          echo "☸️ Checking if EKS cluster exists..."
+          if aws eks describe-cluster --name tx01-eks-${{ github.event.inputs.environment }} --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "✅ Cluster exists, configuring kubectl..."
+            aws eks update-kubeconfig \
+              --name tx01-eks-${{ github.event.inputs.environment }} \
+              --region ${{ env.AWS_REGION }}
+          else
+            echo "⚠️  EKS cluster not found, skipping kubectl configuration"
+            exit 0
+          fi
+      
+      - name: 🗑️ Delete All LoadBalancer Services
+        continue-on-error: true
+        run: |
+          echo "🗑️ Deleting all LoadBalancer services (to remove ALBs/NLBs)..."
+          
+          # Delete LoadBalancer services in all namespaces
+          kubectl get svc -A -o json | \
+            jq -r '.items[] | select(.spec.type=="LoadBalancer") | "\(.metadata.namespace) \(.metadata.name)"' | \
+            while read namespace name; do
+              echo "  Deleting LoadBalancer: $namespace/$name"
+              kubectl delete svc -n $namespace $name --timeout=60s || true
+            done
+          
+          echo "⏳ Waiting 60s for AWS to process deletions..."
+          sleep 60
+          
+          echo "✅ LoadBalancer services deleted"
+      
+      - name: 🗑️ Delete Ingress Resources
+        continue-on-error: true
+        run: |
+          echo "🗑️ Deleting all Ingress resources..."
+          kubectl delete ingress --all -A --timeout=60s || true
+          sleep 30
+          echo "✅ Ingress resources deleted"
+      
+      - name: 🗑️ Delete Persistent Volume Claims
+        continue-on-error: true
+        run: |
+          echo "🗑️ Deleting all PVCs (will delete EBS volumes)..."
+          kubectl delete pvc --all -A --timeout=120s || true
+          sleep 30
+          echo "✅ PVCs deleted"
+      
+      - name: 🗑️ Delete Monitoring Namespace
+        continue-on-error: true
+        run: |
+          echo "🗑️ Deleting monitoring namespace..."
+          kubectl delete namespace monitoring --timeout=120s || true
+          echo "✅ Monitoring namespace deleted"
+
+  destroy-terraform-resources:
+    name: 🗑️ Destroy Terraform Infrastructure
+    needs: destroy-kubernetes-resources
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+      
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🔧 Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      
+      - name: 🔄 Terraform Init
+        run: |
+          cd terraform/${{ github.event.inputs.environment }}
+          terraform init
+      
+      - name: 🗑️ Terraform Destroy
+        run: |
+          cd terraform/${{ github.event.inputs.environment }}
+          
+          echo "🗑️ Running terraform destroy..."
+          echo ""
+          
+          terraform destroy -auto-approve \
+            -var="environment=${{ github.event.inputs.environment }}" \
+            || echo "⚠️  Some resources may have failed to destroy (will clean up manually)"
+      
+      - name: 🧹 Clean Orphaned EKS Resources
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned EKS node groups..."
+          
+          CLUSTER_NAME="tx01-eks-${{ github.event.inputs.environment }}"
+          
+          # Check if cluster still exists
+          if aws eks describe-cluster --name $CLUSTER_NAME --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Deleting node groups..."
+            
+            # List and delete all node groups
+            aws eks list-nodegroups \
+              --cluster-name $CLUSTER_NAME \
+              --region ${{ env.AWS_REGION }} \
+              --query 'nodegroups[]' \
+              --output text | while read nodegroup; do
+                echo "  Deleting nodegroup: $nodegroup"
+                aws eks delete-nodegroup \
+                  --cluster-name $CLUSTER_NAME \
+                  --nodegroup-name $nodegroup \
+                  --region ${{ env.AWS_REGION }} || true
+              done
+            
+            echo "⏳ Waiting for nodegroups to be deleted..."
+            sleep 120
+            
+            # Delete addons
+            echo "Deleting EKS addons..."
+            aws eks list-addons \
+              --cluster-name $CLUSTER_NAME \
+              --region ${{ env.AWS_REGION }} \
+              --query 'addons[]' \
+              --output text | while read addon; do
+                echo "  Deleting addon: $addon"
+                aws eks delete-addon \
+                  --cluster-name $CLUSTER_NAME \
+                  --addon-name $addon \
+                  --region ${{ env.AWS_REGION }} || true
+              done
+            
+            sleep 60
+            
+            # Delete cluster
+            echo "Deleting EKS cluster..."
+            aws eks delete-cluster \
+              --name $CLUSTER_NAME \
+              --region ${{ env.AWS_REGION }} || true
+            
+            echo "⏳ Waiting for cluster deletion..."
+            aws eks wait cluster-deleted \
+              --name $CLUSTER_NAME \
+              --region ${{ env.AWS_REGION }} || true
+          else
+            echo "✅ EKS cluster already deleted"
+          fi
+      
+      - name: 🧹 Clean Orphaned RDS Instances
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned RDS instances..."
+          
+          DB_NAME="tx01-db-${{ github.event.inputs.environment }}"
+          
+          if aws rds describe-db-instances --db-instance-identifier $DB_NAME --region ${{ env.AWS_REGION }} 2>/dev/null; then
+            echo "Deleting RDS instance: $DB_NAME"
+            
+            # Delete without final snapshot (destructive!)
+            aws rds delete-db-instance \
+              --db-instance-identifier $DB_NAME \
+              --skip-final-snapshot \
+              --delete-automated-backups \
+              --region ${{ env.AWS_REGION }} || true
+            
+            echo "⏳ Waiting for RDS deletion..."
+            sleep 60
+          else
+            echo "✅ RDS instance already deleted"
+          fi
+      
+      - name: 🧹 Clean Orphaned Load Balancers
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned load balancers..."
+          
+          # Find ALBs with tx01 or k8s tags
+          aws elbv2 describe-load-balancers \
+            --region ${{ env.AWS_REGION }} \
+            --query 'LoadBalancers[?contains(LoadBalancerName, `tx01`) || contains(LoadBalancerName, `k8s`)].LoadBalancerArn' \
+            --output text | while read alb_arn; do
+              if [ -n "$alb_arn" ]; then
+                echo "  Deleting ALB: $alb_arn"
+                aws elbv2 delete-load-balancer \
+                  --load-balancer-arn $alb_arn \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          sleep 30
+          echo "✅ Load balancers cleaned"
+      
+      - name: 🧹 Clean Orphaned Target Groups
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned target groups..."
+          
+          aws elbv2 describe-target-groups \
+            --region ${{ env.AWS_REGION }} \
+            --query 'TargetGroups[?contains(TargetGroupName, `tx01`) || contains(TargetGroupName, `k8s`)].TargetGroupArn' \
+            --output text | while read tg_arn; do
+              if [ -n "$tg_arn" ]; then
+                echo "  Deleting Target Group: $tg_arn"
+                aws elbv2 delete-target-group \
+                  --target-group-arn $tg_arn \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          echo "✅ Target groups cleaned"
+      
+      - name: 🧹 Clean Orphaned Security Groups
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned security groups..."
+          
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=tx01-vpc-${{ github.event.inputs.environment }}" \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            echo "Found VPC: $VPC_ID"
+            
+            # Remove all security group rules first
+            aws ec2 describe-security-groups \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --output text \
+              --region ${{ env.AWS_REGION }} | while read sg_id; do
+                if [ -n "$sg_id" ]; then
+                  echo "  Revoking rules for SG: $sg_id"
+                  
+                  # Revoke ingress rules
+                  aws ec2 describe-security-groups \
+                    --group-ids $sg_id \
+                    --region ${{ env.AWS_REGION }} \
+                    --query 'SecurityGroups[0].IpPermissions' \
+                    --output json > /tmp/ingress.json 2>/dev/null || true
+                  
+                  if [ -s /tmp/ingress.json ] && [ "$(cat /tmp/ingress.json)" != "[]" ]; then
+                    aws ec2 revoke-security-group-ingress \
+                      --group-id $sg_id \
+                      --ip-permissions file:///tmp/ingress.json \
+                      --region ${{ env.AWS_REGION }} 2>/dev/null || true
+                  fi
+                  
+                  # Revoke egress rules
+                  aws ec2 describe-security-groups \
+                    --group-ids $sg_id \
+                    --region ${{ env.AWS_REGION }} \
+                    --query 'SecurityGroups[0].IpPermissionsEgress' \
+                    --output json > /tmp/egress.json 2>/dev/null || true
+                  
+                  if [ -s /tmp/egress.json ] && [ "$(cat /tmp/egress.json)" != "[]" ]; then
+                    aws ec2 revoke-security-group-egress \
+                      --group-id $sg_id \
+                      --ip-permissions file:///tmp/egress.json \
+                      --region ${{ env.AWS_REGION }} 2>/dev/null || true
+                  fi
+                fi
+              done
+            
+            sleep 30
+            
+            # Delete security groups
+            aws ec2 describe-security-groups \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'SecurityGroups[?GroupName!=`default`].GroupId' \
+              --output text \
+              --region ${{ env.AWS_REGION }} | while read sg_id; do
+                if [ -n "$sg_id" ]; then
+                  echo "  Deleting SG: $sg_id"
+                  aws ec2 delete-security-group \
+                    --group-id $sg_id \
+                    --region ${{ env.AWS_REGION }} || true
+                fi
+              done
+          fi
+          
+          echo "✅ Security groups cleaned"
+      
+      - name: 🧹 Clean Orphaned NAT Gateways
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned NAT gateways..."
+          
+          aws ec2 describe-nat-gateways \
+            --filter "Name=tag:Name,Values=*tx01*" \
+            --query 'NatGateways[?State==`available`].NatGatewayId' \
+            --output text \
+            --region ${{ env.AWS_REGION }} | while read nat_id; do
+              if [ -n "$nat_id" ]; then
+                echo "  Deleting NAT Gateway: $nat_id"
+                aws ec2 delete-nat-gateway \
+                  --nat-gateway-id $nat_id \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          echo "⏳ Waiting for NAT gateways deletion..."
+          sleep 60
+          
+          echo "✅ NAT gateways cleaned"
+      
+      - name: 🧹 Release Elastic IPs
+        continue-on-error: true
+        run: |
+          echo "🧹 Releasing Elastic IPs..."
+          
+          aws ec2 describe-addresses \
+            --filters "Name=tag:Name,Values=*tx01*" \
+            --query 'Addresses[].AllocationId' \
+            --output text \
+            --region ${{ env.AWS_REGION }} | while read eip_id; do
+              if [ -n "$eip_id" ]; then
+                echo "  Releasing EIP: $eip_id"
+                aws ec2 release-address \
+                  --allocation-id $eip_id \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          echo "✅ Elastic IPs released"
+      
+      - name: 🧹 Clean Orphaned EBS Volumes
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning orphaned EBS volumes..."
+          
+          aws ec2 describe-volumes \
+            --filters "Name=tag:Name,Values=*tx01*" "Name=status,Values=available" \
+            --query 'Volumes[].VolumeId' \
+            --output text \
+            --region ${{ env.AWS_REGION }} | while read vol_id; do
+              if [ -n "$vol_id" ]; then
+                echo "  Deleting volume: $vol_id"
+                aws ec2 delete-volume \
+                  --volume-id $vol_id \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          echo "✅ EBS volumes cleaned"
+      
+      - name: 🧹 Delete VPC
+        continue-on-error: true
+        run: |
+          echo "🧹 Deleting VPC..."
+          
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=tx01-vpc-${{ github.event.inputs.environment }}" \
+            --query 'Vpcs[0].VpcId' \
+            --output text \
+            --region ${{ env.AWS_REGION }} 2>/dev/null || echo "")
+          
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            echo "Deleting VPC: $VPC_ID"
+            
+            # Delete subnets
+            aws ec2 describe-subnets \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'Subnets[].SubnetId' \
+              --output text \
+              --region ${{ env.AWS_REGION }} | while read subnet_id; do
+                echo "  Deleting subnet: $subnet_id"
+                aws ec2 delete-subnet \
+                  --subnet-id $subnet_id \
+                  --region ${{ env.AWS_REGION }} || true
+              done
+            
+            # Delete route tables
+            aws ec2 describe-route-tables \
+              --filters "Name=vpc-id,Values=$VPC_ID" \
+              --query 'RouteTables[?Associations[0].Main!=`true`].RouteTableId' \
+              --output text \
+              --region ${{ env.AWS_REGION }} | while read rt_id; do
+                echo "  Deleting route table: $rt_id"
+                aws ec2 delete-route-table \
+                  --route-table-id $rt_id \
+                  --region ${{ env.AWS_REGION }} || true
+              done
+            
+            # Delete internet gateway
+            aws ec2 describe-internet-gateways \
+              --filters "Name=attachment.vpc-id,Values=$VPC_ID" \
+              --query 'InternetGateways[].InternetGatewayId' \
+              --output text \
+              --region ${{ env.AWS_REGION }} | while read igw_id; do
+                echo "  Detaching and deleting IGW: $igw_id"
+                aws ec2 detach-internet-gateway \
+                  --internet-gateway-id $igw_id \
+                  --vpc-id $VPC_ID \
+                  --region ${{ env.AWS_REGION }} || true
+                aws ec2 delete-internet-gateway \
+                  --internet-gateway-id $igw_id \
+                  --region ${{ env.AWS_REGION }} || true
+              done
+            
+            # Finally delete VPC
+            echo "  Deleting VPC: $VPC_ID"
+            aws ec2 delete-vpc \
+              --vpc-id $VPC_ID \
+              --region ${{ env.AWS_REGION }} || true
+          fi
+          
+          echo "✅ VPC cleaned"
+
+  cleanup-ecr:
+    name: 🗑️ Clean ECR Repositories
+    needs: destroy-terraform-resources
+    runs-on: ubuntu-latest
+    if: github.event.inputs.preserve_ecr_images == 'false'
+    steps:
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🗑️ Delete ECR Repositories
+        run: |
+          echo "🗑️ Deleting ECR repositories..."
+          
+          aws ecr describe-repositories \
+            --region ${{ env.AWS_REGION }} \
+            --query 'repositories[?contains(repositoryName, `tx01`) || contains(repositoryName, `dx01`)].repositoryName' \
+            --output text | while read repo_name; do
+              if [ -n "$repo_name" ]; then
+                echo "  Deleting repository: $repo_name"
+                aws ecr delete-repository \
+                  --repository-name $repo_name \
+                  --force \
+                  --region ${{ env.AWS_REGION }} || true
+              fi
+            done
+          
+          echo "✅ ECR repositories deleted"
+
+  cleanup-iam:
+    name: 🗑️ Clean IAM Resources
+    needs: destroy-terraform-resources
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 🗑️ Delete EKS-related IAM Roles
+        continue-on-error: true
+        run: |
+          echo "🗑️ Cleaning EKS-related IAM roles..."
+          
+          # List of IAM roles to delete
+          ROLES=(
+            "tx01-eks-cluster-role-${{ github.event.inputs.environment }}"
+            "tx01-eks-node-role-${{ github.event.inputs.environment }}"
+            "tx01-eks-ebs-csi-driver"
+            "tx01-alb-controller-${{ github.event.inputs.environment }}"
+          )
+          
+          for role in "${ROLES[@]}"; do
+            if aws iam get-role --role-name $role 2>/dev/null; then
+              echo "  Deleting role: $role"
+              
+              # Detach all policies
+              aws iam list-attached-role-policies \
+                --role-name $role \
+                --query 'AttachedPolicies[].PolicyArn' \
+                --output text | while read policy_arn; do
+                  echo "    Detaching policy: $policy_arn"
+                  aws iam detach-role-policy \
+                    --role-name $role \
+                    --policy-arn $policy_arn || true
+                done
+              
+              # Delete inline policies
+              aws iam list-role-policies \
+                --role-name $role \
+                --query 'PolicyNames[]' \
+                --output text | while read policy_name; do
+                  echo "    Deleting inline policy: $policy_name"
+                  aws iam delete-role-policy \
+                    --role-name $role \
+                    --policy-name $policy_name || true
+                done
+              
+              # Delete role
+              aws iam delete-role --role-name $role || true
+            fi
+          done
+          
+          echo "✅ IAM roles cleaned"
+
+  final-report:
+    name: 📋 Destruction Report
+    needs: [destroy-kubernetes-resources, destroy-terraform-resources, cleanup-ecr, cleanup-iam]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔧 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      
+      - name: 📋 Generate Destruction Report
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "📋 DESTRUCTION REPORT - ${{ github.event.inputs.environment }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo ""
+          
+          echo "🔍 Checking remaining resources..."
+          echo ""
+          
+          echo "VPCs:"
+          aws ec2 describe-vpcs \
+            --filters "Name=tag:Name,Values=*tx01*" \
+            --query 'Vpcs[].{ID:VpcId,Name:Tags[?Key==`Name`]|[0].Value}' \
+            --output table || echo "  ✅ None found"
+          
+          echo ""
+          echo "EKS Clusters:"
+          aws eks list-clusters \
+            --query 'clusters[?contains(@, `tx01`)]' \
+            --output table || echo "  ✅ None found"
+          
+          echo ""
+          echo "RDS Instances:"
+          aws rds describe-db-instances \
+            --query 'DBInstances[?contains(DBInstanceIdentifier, `tx01`)].DBInstanceIdentifier' \
+            --output table || echo "  ✅ None found"
+          
+          echo ""
+          echo "Load Balancers:"
+          aws elbv2 describe-load-balancers \
+            --query 'LoadBalancers[?contains(LoadBalancerName, `tx01`) || contains(LoadBalancerName, `k8s`)].LoadBalancerName' \
+            --output table || echo "  ✅ None found"
+          
+          echo ""
+          echo "NAT Gateways:"
+          aws ec2 describe-nat-gateways \
+            --filter "Name=tag:Name,Values=*tx01*" \
+            --query 'NatGateways[?State!=`deleted`].{ID:NatGatewayId,State:State}' \
+            --output table || echo "  ✅ None found"
+          
+          if [ "${{ github.event.inputs.preserve_ecr_images }}" = "false" ]; then
+            echo ""
+            echo "ECR Repositories:"
+            aws ecr describe-repositories \
+              --query 'repositories[?contains(repositoryName, `tx01`) || contains(repositoryName, `dx01`)].repositoryName' \
+              --output table || echo "  ✅ None found"
+          fi
+          
+          echo ""
+          echo "✅ PRESERVED Resources:"
+          echo ""
+          aws s3 ls | grep tx01 || echo "  S3: None found"
+          echo ""
+          aws dynamodb list-tables \
+            --query 'TableNames[?contains(@, `tx01`)]' \
+            --output table || echo "  DynamoDB: None found"
+          
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Environment destruction completed!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
