@@ -15,13 +15,13 @@ $region = "us-east-1"
 $clusterName = "tx01-eks-$Environment"
 $vpcName = "tx01-vpc-$Environment"
 
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "🗑️  MANUAL AWS CLEANUP - $Environment" -ForegroundColor Cyan
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "MANUAL AWS CLEANUP - $Environment" -ForegroundColor Cyan
+Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 
 if ($DryRun) {
-    Write-Host "⚠️  DRY RUN MODE - No resources will be deleted" -ForegroundColor Yellow
+    Write-Host "WARNING: DRY RUN MODE - No resources will be deleted" -ForegroundColor Yellow
     Write-Host ""
 }
 
@@ -358,27 +358,28 @@ try {
 }
 
 # Final report
-Write-Host "`n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
-Write-Host "✅ CLEANUP COMPLETED" -ForegroundColor Green
-Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "CLEANUP COMPLETED" -ForegroundColor Green
+Write-Host "============================================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Preserved resources:" -ForegroundColor Yellow
-Write-Host "  ✓ S3: tx01-terraform-state-maringelix-2025"
-Write-Host "  ✓ DynamoDB: tx01-terraform-state-maringelix-2025-locks"
+Write-Host "  * S3: tx01-terraform-state-maringelix-2025"
+Write-Host "  * DynamoDB: tx01-terraform-state-maringelix-2025-locks"
 Write-Host ""
 Write-Host "Service-linked IAM roles (cannot be deleted):" -ForegroundColor Yellow
-Write-Host "  ✓ AWSServiceRoleForAmazonEKS"
-Write-Host "  ✓ AWSServiceRoleForAmazonEKSNodegroup"
-Write-Host "  ✓ AWSServiceRoleForAutoScaling"
-Write-Host "  ✓ AWSServiceRoleForRDS"
-Write-Host "  ✓ AWSServiceRoleForElasticLoadBalancing"
+Write-Host "  * AWSServiceRoleForAmazonEKS"
+Write-Host "  * AWSServiceRoleForAmazonEKSNodegroup"
+Write-Host "  * AWSServiceRoleForAutoScaling"
+Write-Host "  * AWSServiceRoleForRDS"
+Write-Host "  * AWSServiceRoleForElasticLoadBalancing"
 Write-Host ""
 Write-Host "Auto-cleanup resources (will expire):" -ForegroundColor Yellow
-Write-Host "  ✓ EC2 Fleets (48 hours)"
-Write-Host "  ✓ CloudWatch default resources"
+Write-Host "  * EC2 Fleets (48 hours)"
+Write-Host "  * CloudWatch default resources"
 Write-Host ""
 
 if ($DryRun) {
-    Write-Host "⚠️  This was a DRY RUN - no resources were deleted" -ForegroundColor Yellow
+    Write-Host "WARNING: This was a DRY RUN - no resources were deleted" -ForegroundColor Yellow
     Write-Host "   Run without -DryRun to execute deletions" -ForegroundColor Yellow
 }
