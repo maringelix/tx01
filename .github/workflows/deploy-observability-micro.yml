@@ -143,10 +143,10 @@ jobs:
           echo "✅ GRAFANA_PASSWORD secret is configured (length: $PASSWORD_LENGTH chars)"
           echo "🔒 Password will be securely applied to Grafana deployment"
       
-      - name: 🔌 Ensure EBS CSI Driver is installed
+      - name: 🔌 Quick EBS CSI Driver Check
         if: github.event.inputs.action == 'install'
         run: |
-          echo "🔍 Checking EBS CSI Driver addon..."
+          echo "🔍 Quick check: EBS CSI Driver addon..."
           
           ADDON_STATUS=$(aws eks describe-addon \
             --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
@@ -155,86 +155,18 @@ jobs:
             --query 'addon.status' \
             --output text 2>/dev/null || echo "NOT_FOUND")
           
-          if [ "$ADDON_STATUS" = "NOT_FOUND" ]; then
-            echo "⚠️  EBS CSI Driver not found, installing..."
-            
-            # Check if IAM role exists
-            ROLE_EXISTS=$(aws iam get-role \
-              --role-name tx01-eks-ebs-csi-driver \
-              --query 'Role.RoleName' \
-              --output text 2>/dev/null || echo "NOT_FOUND")
-            
-            if [ "$ROLE_EXISTS" = "NOT_FOUND" ]; then
-              echo "Creating IAM role for EBS CSI Driver..."
-              
-              # Get OIDC provider
-              OIDC_ID=$(aws eks describe-cluster \
-                --name tx01-eks-${{ github.event.inputs.environment }} \
-                --region ${{ env.AWS_REGION }} \
-                --query 'cluster.identity.oidc.issuer' \
-                --output text | cut -d '/' -f 5)
-              
-              ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-              
-              # Create trust policy
-              cat > trust-policy.json <<EOF
-          {
-            "Version": "2012-10-17",
-            "Statement": [{
-              "Effect": "Allow",
-              "Principal": {
-                "Federated": "arn:aws:iam::${ACCOUNT_ID}:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}"
-              },
-              "Action": "sts:AssumeRoleWithWebIdentity",
-              "Condition": {
-                "StringEquals": {
-                  "oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}:aud": "sts.amazonaws.com",
-                  "oidc.eks.us-east-1.amazonaws.com/id/${OIDC_ID}:sub": "system:serviceaccount:kube-system:ebs-csi-controller-sa"
-                }
-              }
-            }]
-          }
-          EOF
-              
-              # Create role
-              aws iam create-role \
-                --role-name tx01-eks-ebs-csi-driver \
-                --assume-role-policy-document file://trust-policy.json
-              
-              # Attach policy
-              aws iam attach-role-policy \
-                --role-name tx01-eks-ebs-csi-driver \
-                --policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy
-              
-              echo "✅ IAM role created"
-            else
-              echo "✅ IAM role already exists"
-            fi
-            
-            # Install addon
-            aws eks create-addon \
-              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-              --addon-name aws-ebs-csi-driver \
-              --service-account-role-arn arn:aws:iam::${ACCOUNT_ID}:role/tx01-eks-ebs-csi-driver \
-              --region ${{ env.AWS_REGION }}
-            
-            echo "⏳ Waiting for addon to be ACTIVE..."
-            aws eks wait addon-active \
-              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-              --addon-name aws-ebs-csi-driver \
-              --region ${{ env.AWS_REGION }}
-            
-            echo "✅ EBS CSI Driver installed"
-          elif [ "$ADDON_STATUS" = "ACTIVE" ]; then
-            echo "✅ EBS CSI Driver already active"
+          
+          if [ "$ADDON_STATUS" = "ACTIVE" ]; then
+            echo "✅ EBS CSI Driver already active - skipping installation"
           else
-            echo "⚠️  EBS CSI Driver status: $ADDON_STATUS"
-            echo "Waiting for it to become ACTIVE..."
-            aws eks wait addon-active \
-              --cluster-name tx01-eks-${{ github.event.inputs.environment }} \
-              --addon-name aws-ebs-csi-driver \
-              --region ${{ env.AWS_REGION }}
-            echo "✅ EBS CSI Driver is now active"
+            echo "❌ EBS CSI Driver not found or not active: $ADDON_STATUS"
+            echo ""
+            echo "Please install EBS CSI Driver manually:"
+            echo "  terraform/stg/terraform apply  # Should include EBS CSI addon"
+            echo ""
+            echo "Or via AWS CLI:"
+            echo "  aws eks create-addon --cluster-name tx01-eks-stg --addon-name aws-ebs-csi-driver"
+            exit 1
           fi
       
       - name: 📊 Install Prometheus + Grafana (MICRO Stack)
