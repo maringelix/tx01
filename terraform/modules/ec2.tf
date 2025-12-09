@@ -18,7 +18,7 @@ data "aws_ami" "ubuntu" {
 locals {
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     ecr_registry  = split("/", aws_ecr_repository.main.repository_url)[0]
-    docker_image  = "${var.project_name}-nginx:${var.docker_image_tag}"
+    docker_image  = "dx01-app:${var.docker_image_tag}"
     environment   = var.environment
     aws_region    = var.aws_region
     db_secret_arn = aws_secretsmanager_secret.db_credentials.arn

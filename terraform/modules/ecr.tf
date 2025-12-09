@@ -1,6 +1,6 @@
 # ECR Repository
 resource "aws_ecr_repository" "main" {
-  name                 = "${var.project_name}-nginx"
+  name                 = "dx01-app"
   image_tag_mutability = "IMMUTABLE"
   force_delete         = var.environment == "stg" ? true : false
 
