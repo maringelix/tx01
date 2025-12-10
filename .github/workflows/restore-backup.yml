@@ -1,0 +1,373 @@
+name: ♻️ Restore from Backup
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to restore'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+        default: 'stg'
+      resource_type:
+        description: 'Type of resource to restore'
+        required: true
+        type: choice
+        options:
+          - rds
+          - ebs
+          - list-backups
+        default: 'list-backups'
+      recovery_point_arn:
+        description: 'Recovery point ARN (leave empty to list available backups)'
+        required: false
+        type: string
+      restore_to_new_resource:
+        description: 'Create new resource instead of overwriting'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  list-backups:
+    if: ${{ github.event.inputs.resource_type == 'list-backups' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: List available backups
+        run: |
+          VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}"
+          
+          echo "============================================"
+          echo "📦 Available Backups - ${{ github.event.inputs.environment }}"
+          echo "============================================"
+          echo ""
+          
+          # List recovery points
+          aws backup list-recovery-points-by-backup-vault \
+            --backup-vault-name $VAULT_NAME \
+            --query 'RecoveryPoints[].{
+              ARN:RecoveryPointArn,
+              ResourceType:ResourceType,
+              CreationDate:CreationDate,
+              Status:Status,
+              Size:BackupSizeInBytes
+            }' \
+            --output table
+          
+          echo ""
+          echo "💡 To restore a backup, run this workflow again with:"
+          echo "   - resource_type: rds or ebs"
+          echo "   - recovery_point_arn: <ARN from table above>"
+          echo ""
+
+  restore-rds:
+    if: ${{ github.event.inputs.resource_type == 'rds' && github.event.inputs.recovery_point_arn != '' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - name: Prepare restore metadata
+        run: |
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          
+          if [ "${{ github.event.inputs.restore_to_new_resource }}" = "true" ]; then
+            NEW_DB_ID="tx01-rds-${{ github.event.inputs.environment }}-restored-$TIMESTAMP"
+          else
+            NEW_DB_ID="tx01-rds-${{ github.event.inputs.environment }}"
+          fi
+          
+          echo "NEW_DB_IDENTIFIER=$NEW_DB_ID" >> $GITHUB_ENV
+          
+          # Get original DB config for restore
+          ORIGINAL_DB=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
+            --output text | head -1)
+          
+          if [ -n "$ORIGINAL_DB" ]; then
+            # Get VPC security groups
+            SECURITY_GROUPS=$(aws rds describe-db-instances \
+              --db-instance-identifier $ORIGINAL_DB \
+              --query 'DBInstances[0].VpcSecurityGroups[].VpcSecurityGroupId' \
+              --output text)
+            
+            # Get DB subnet group
+            SUBNET_GROUP=$(aws rds describe-db-instances \
+              --db-instance-identifier $ORIGINAL_DB \
+              --query 'DBInstances[0].DBSubnetGroup.DBSubnetGroupName' \
+              --output text)
+            
+            echo "SECURITY_GROUPS=$SECURITY_GROUPS" >> $GITHUB_ENV
+            echo "SUBNET_GROUP=$SUBNET_GROUP" >> $GITHUB_ENV
+          fi
+
+      - name: Restore RDS from backup
+        run: |
+          ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          echo "Starting RDS restore..."
+          echo "Recovery Point: ${{ github.event.inputs.recovery_point_arn }}"
+          echo "New DB Identifier: $NEW_DB_IDENTIFIER"
+          
+          # Create restore metadata JSON
+          cat > /tmp/restore-metadata.json <<EOF
+          {
+            "DBInstanceIdentifier": "$NEW_DB_IDENTIFIER",
+            "DBSubnetGroupName": "$SUBNET_GROUP",
+            "VpcSecurityGroupIds": $(echo $SECURITY_GROUPS | jq -R 'split(" ")')
+          }
+          EOF
+          
+          # Start restore job
+          RESTORE_JOB_ID=$(aws backup start-restore-job \
+            --recovery-point-arn "${{ github.event.inputs.recovery_point_arn }}" \
+            --iam-role-arn "$ROLE_ARN" \
+            --metadata file:///tmp/restore-metadata.json \
+            --query 'RestoreJobId' \
+            --output text)
+          
+          echo "✅ Restore job started: $RESTORE_JOB_ID"
+          echo "RESTORE_JOB_ID=$RESTORE_JOB_ID" >> $GITHUB_ENV
+
+      - name: Monitor restore progress
+        run: |
+          echo "Monitoring restore job: $RESTORE_JOB_ID"
+          
+          while true; do
+            STATUS=$(aws backup describe-restore-job \
+              --restore-job-id $RESTORE_JOB_ID \
+              --query 'Status' \
+              --output text)
+            
+            echo "Current status: $STATUS"
+            
+            if [ "$STATUS" = "COMPLETED" ]; then
+              echo "✅ Restore completed successfully!"
+              break
+            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "ABORTED" ]; then
+              echo "❌ Restore failed with status: $STATUS"
+              
+              # Get failure details
+              aws backup describe-restore-job \
+                --restore-job-id $RESTORE_JOB_ID \
+                --query 'StatusMessage' \
+                --output text
+              
+              exit 1
+            fi
+            
+            sleep 30
+          done
+          
+          echo ""
+          echo "============================================"
+          echo "✅ RDS Restore Complete"
+          echo "============================================"
+          echo "New DB Identifier: $NEW_DB_IDENTIFIER"
+          echo ""
+          echo "💡 Next steps:"
+          echo "  1. Verify restored database in AWS Console"
+          echo "  2. Update Kubernetes secret with new endpoint"
+          echo "  3. Test database connectivity"
+          echo "  4. If successful, consider deleting old database"
+          echo ""
+
+  restore-ebs:
+    if: ${{ github.event.inputs.resource_type == 'ebs' && github.event.inputs.recovery_point_arn != '' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+
+      - name: Get original volume metadata
+        run: |
+          # Extract resource ID from recovery point
+          RESOURCE_ARN=$(aws backup describe-recovery-point \
+            --backup-vault-name "tx01-backup-vault-${{ github.event.inputs.environment }}" \
+            --recovery-point-arn "${{ github.event.inputs.recovery_point_arn }}" \
+            --query 'ResourceArn' \
+            --output text)
+          
+          VOLUME_ID=$(echo $RESOURCE_ARN | grep -oP 'vol-[a-z0-9]+')
+          
+          if [ -n "$VOLUME_ID" ]; then
+            # Get volume metadata
+            AZ=$(aws ec2 describe-volumes \
+              --volume-ids $VOLUME_ID \
+              --query 'Volumes[0].AvailabilityZone' \
+              --output text 2>/dev/null || echo "us-east-1a")
+            
+            VOLUME_TYPE=$(aws ec2 describe-volumes \
+              --volume-ids $VOLUME_ID \
+              --query 'Volumes[0].VolumeType' \
+              --output text 2>/dev/null || echo "gp3")
+            
+            echo "AVAILABILITY_ZONE=$AZ" >> $GITHUB_ENV
+            echo "VOLUME_TYPE=$VOLUME_TYPE" >> $GITHUB_ENV
+            echo "ORIGINAL_VOLUME_ID=$VOLUME_ID" >> $GITHUB_ENV
+          else
+            # Use defaults
+            echo "AVAILABILITY_ZONE=us-east-1a" >> $GITHUB_ENV
+            echo "VOLUME_TYPE=gp3" >> $GITHUB_ENV
+          fi
+
+      - name: Restore EBS volume from backup
+        run: |
+          ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          echo "Starting EBS restore..."
+          echo "Recovery Point: ${{ github.event.inputs.recovery_point_arn }}"
+          echo "Availability Zone: $AVAILABILITY_ZONE"
+          echo "Volume Type: $VOLUME_TYPE"
+          
+          # Create restore metadata JSON
+          cat > /tmp/restore-metadata-ebs.json <<EOF
+          {
+            "availabilityZone": "$AVAILABILITY_ZONE",
+            "volumeType": "$VOLUME_TYPE"
+          }
+          EOF
+          
+          # Start restore job
+          RESTORE_JOB_ID=$(aws backup start-restore-job \
+            --recovery-point-arn "${{ github.event.inputs.recovery_point_arn }}" \
+            --iam-role-arn "$ROLE_ARN" \
+            --metadata file:///tmp/restore-metadata-ebs.json \
+            --query 'RestoreJobId' \
+            --output text)
+          
+          echo "✅ Restore job started: $RESTORE_JOB_ID"
+          echo "RESTORE_JOB_ID=$RESTORE_JOB_ID" >> $GITHUB_ENV
+
+      - name: Monitor restore progress
+        run: |
+          echo "Monitoring restore job: $RESTORE_JOB_ID"
+          
+          while true; do
+            STATUS=$(aws backup describe-restore-job \
+              --restore-job-id $RESTORE_JOB_ID \
+              --query 'Status' \
+              --output text)
+            
+            echo "Current status: $STATUS"
+            
+            if [ "$STATUS" = "COMPLETED" ]; then
+              # Get restored volume ID
+              RESTORED_VOLUME=$(aws backup describe-restore-job \
+                --restore-job-id $RESTORE_JOB_ID \
+                --query 'CreatedResourceArn' \
+                --output text | grep -oP 'vol-[a-z0-9]+')
+              
+              echo "✅ Restore completed successfully!"
+              echo "Restored Volume ID: $RESTORED_VOLUME"
+              echo "RESTORED_VOLUME_ID=$RESTORED_VOLUME" >> $GITHUB_ENV
+              break
+            elif [ "$STATUS" = "FAILED" ] || [ "$STATUS" = "ABORTED" ]; then
+              echo "❌ Restore failed with status: $STATUS"
+              
+              aws backup describe-restore-job \
+                --restore-job-id $RESTORE_JOB_ID \
+                --query 'StatusMessage' \
+                --output text
+              
+              exit 1
+            fi
+            
+            sleep 20
+          done
+
+      - name: Tag restored volume
+        if: env.RESTORED_VOLUME_ID != ''
+        run: |
+          echo "Tagging restored volume: $RESTORED_VOLUME_ID"
+          
+          TIMESTAMP=$(date +%Y-%m-%d)
+          
+          aws ec2 create-tags \
+            --resources $RESTORED_VOLUME_ID \
+            --tags \
+              Key=Name,Value="tx01-restored-${{ github.event.inputs.environment }}-$TIMESTAMP" \
+              Key=Project,Value=tx01 \
+              Key=Environment,Value=${{ github.event.inputs.environment }} \
+              Key=RestoredFrom,Value="${ORIGINAL_VOLUME_ID:-unknown}" \
+              Key=RestoreDate,Value=$TIMESTAMP
+          
+          echo ""
+          echo "============================================"
+          echo "✅ EBS Volume Restore Complete"
+          echo "============================================"
+          echo "Restored Volume ID: $RESTORED_VOLUME_ID"
+          echo "Availability Zone: $AVAILABILITY_ZONE"
+          echo ""
+          echo "💡 Next steps:"
+          echo "  1. Verify volume in AWS Console"
+          echo "  2. Attach volume to EC2 instance or"
+          echo "  3. Use volume to restore Kubernetes PVC"
+          echo "  4. Mount and verify data integrity"
+          echo ""
+
+      - name: Send Slack notification
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "⚠️ SLACK_WEBHOOK_URL not configured, skipping notification"
+            exit 0
+          fi
+          
+          if [ "${{ job.status }}" = "success" ]; then
+            COLOR="good"
+            EMOJI="✅"
+            STATUS="SUCCESS"
+          else
+            COLOR="danger"
+            EMOJI="❌"
+            STATUS="FAILED"
+          fi
+          
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"attachments\": [{
+                \"color\": \"$COLOR\",
+                \"title\": \"$EMOJI Restore $STATUS\",
+                \"text\": \"Type: ${{ github.event.inputs.resource_type }}\nEnvironment: ${{ github.event.inputs.environment }}\nNew Resource: ${{ github.event.inputs.restore_to_new_resource }}\",
+                \"footer\": \"GitHub Actions\",
+                \"ts\": $(date +%s)
+              }]
+            }"

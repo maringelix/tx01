@@ -1,0 +1,464 @@
+name: 🗄️ Configure Backup Automation
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to configure backups'
+        required: true
+        type: choice
+        options:
+          - stg
+          - prd
+        default: 'stg'
+      backup_retention_days:
+        description: 'Backup retention in days'
+        required: true
+        type: choice
+        options:
+          - '7'
+          - '14'
+          - '30'
+          - '90'
+        default: '7'
+      enable_cross_region:
+        description: 'Enable cross-region backup copy'
+        required: true
+        type: boolean
+        default: false
+      backup_schedule:
+        description: 'Backup schedule (cron UTC)'
+        required: true
+        type: string
+        default: '0 3 * * *'  # 3 AM UTC daily
+
+env:
+  AWS_REGION: us-east-1
+  BACKUP_REGION: us-west-2  # Cross-region backup destination
+
+jobs:
+  configure-aws-backup:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get AWS Account ID
+        id: account
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account_id=$ACCOUNT_ID" >> $GITHUB_OUTPUT
+          echo "AWS Account: $ACCOUNT_ID"
+
+      - name: Create backup vault
+        run: |
+          VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}"
+          
+          # Check if vault exists
+          if aws backup describe-backup-vault --backup-vault-name $VAULT_NAME 2>/dev/null; then
+            echo "✅ Backup vault already exists: $VAULT_NAME"
+          else
+            echo "Creating backup vault: $VAULT_NAME"
+            aws backup create-backup-vault \
+              --backup-vault-name $VAULT_NAME \
+              --backup-vault-tags \
+                Project=tx01 \
+                Environment=${{ github.event.inputs.environment }} \
+                ManagedBy=github-actions
+            echo "✅ Backup vault created: $VAULT_NAME"
+          fi
+
+      - name: Create cross-region backup vault
+        if: ${{ github.event.inputs.enable_cross_region == 'true' }}
+        run: |
+          VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}-replica"
+          
+          # Check if vault exists in backup region
+          if aws backup describe-backup-vault \
+            --backup-vault-name $VAULT_NAME \
+            --region ${{ env.BACKUP_REGION }} 2>/dev/null; then
+            echo "✅ Cross-region backup vault already exists: $VAULT_NAME"
+          else
+            echo "Creating cross-region backup vault: $VAULT_NAME"
+            aws backup create-backup-vault \
+              --backup-vault-name $VAULT_NAME \
+              --region ${{ env.BACKUP_REGION }} \
+              --backup-vault-tags \
+                Project=tx01 \
+                Environment=${{ github.event.inputs.environment }} \
+                ManagedBy=github-actions \
+                VaultType=replica
+            echo "✅ Cross-region backup vault created: $VAULT_NAME"
+          fi
+
+      - name: Create IAM role for AWS Backup
+        run: |
+          ROLE_NAME="tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          # Check if role exists
+          if aws iam get-role --role-name $ROLE_NAME 2>/dev/null; then
+            echo "✅ IAM role already exists: $ROLE_NAME"
+          else
+            echo "Creating IAM role for AWS Backup"
+            
+            # Create trust policy
+            cat > /tmp/backup-trust-policy.json <<EOF
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {
+                  "Service": "backup.amazonaws.com"
+                },
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+          EOF
+            
+            # Create role
+            aws iam create-role \
+              --role-name $ROLE_NAME \
+              --assume-role-policy-document file:///tmp/backup-trust-policy.json \
+              --tags \
+                Key=Project,Value=tx01 \
+                Key=Environment,Value=${{ github.event.inputs.environment }}
+            
+            # Attach AWS managed policies
+            aws iam attach-role-policy \
+              --role-name $ROLE_NAME \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+            
+            aws iam attach-role-policy \
+              --role-name $ROLE_NAME \
+              --policy-arn arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+            
+            echo "✅ IAM role created: $ROLE_NAME"
+          fi
+
+      - name: Create backup plan
+        run: |
+          PLAN_NAME="tx01-daily-backup-${{ github.event.inputs.environment }}"
+          VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}"
+          ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          # Create backup plan JSON
+          cat > /tmp/backup-plan.json <<EOF
+          {
+            "BackupPlanName": "$PLAN_NAME",
+            "Rules": [
+              {
+                "RuleName": "DailyBackup",
+                "TargetBackupVaultName": "$VAULT_NAME",
+                "ScheduleExpression": "cron(${{ github.event.inputs.backup_schedule }})",
+                "StartWindowMinutes": 60,
+                "CompletionWindowMinutes": 120,
+                "Lifecycle": {
+                  "DeleteAfterDays": ${{ github.event.inputs.backup_retention_days }}
+                },
+                "RecoveryPointTags": {
+                  "Project": "tx01",
+                  "Environment": "${{ github.event.inputs.environment }}",
+                  "BackupType": "automated"
+                }
+              }
+            ]
+          }
+          EOF
+          
+          # Check if plan exists
+          EXISTING_PLAN=$(aws backup list-backup-plans \
+            --query "BackupPlansList[?BackupPlanName=='$PLAN_NAME'].BackupPlanId" \
+            --output text)
+          
+          if [ -z "$EXISTING_PLAN" ]; then
+            echo "Creating backup plan: $PLAN_NAME"
+            PLAN_ID=$(aws backup create-backup-plan \
+              --backup-plan file:///tmp/backup-plan.json \
+              --query 'BackupPlanId' \
+              --output text)
+            echo "✅ Backup plan created: $PLAN_ID"
+          else
+            echo "Updating existing backup plan: $EXISTING_PLAN"
+            aws backup update-backup-plan \
+              --backup-plan-id $EXISTING_PLAN \
+              --backup-plan file:///tmp/backup-plan.json
+            PLAN_ID=$EXISTING_PLAN
+            echo "✅ Backup plan updated: $PLAN_ID"
+          fi
+          
+          echo "BACKUP_PLAN_ID=$PLAN_ID" >> $GITHUB_ENV
+
+      - name: Add backup selection for RDS
+        run: |
+          PLAN_NAME="tx01-daily-backup-${{ github.event.inputs.environment }}"
+          ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          # Get backup plan ID
+          PLAN_ID=$(aws backup list-backup-plans \
+            --query "BackupPlansList[?BackupPlanName=='$PLAN_NAME'].BackupPlanId" \
+            --output text)
+          
+          # Create selection JSON for RDS
+          cat > /tmp/backup-selection-rds.json <<EOF
+          {
+            "SelectionName": "tx01-rds-${{ github.event.inputs.environment }}",
+            "IamRoleArn": "$ROLE_ARN",
+            "Resources": [],
+            "ListOfTags": [
+              {
+                "ConditionType": "STRINGEQUALS",
+                "ConditionKey": "Project",
+                "ConditionValue": "tx01"
+              },
+              {
+                "ConditionType": "STRINGEQUALS",
+                "ConditionKey": "Environment",
+                "ConditionValue": "${{ github.event.inputs.environment }}"
+              }
+            ],
+            "Conditions": {
+              "StringEquals": [
+                {
+                  "ConditionKey": "aws:ResourceTag/BackupEnabled",
+                  "ConditionValue": "true"
+                }
+              ]
+            }
+          }
+          EOF
+          
+          # Try to create selection (will fail if exists, that's ok)
+          aws backup create-backup-selection \
+            --backup-plan-id $PLAN_ID \
+            --backup-selection file:///tmp/backup-selection-rds.json 2>/dev/null || \
+            echo "✅ Backup selection already exists or updated"
+
+      - name: Add backup selection for EBS volumes
+        run: |
+          PLAN_NAME="tx01-daily-backup-${{ github.event.inputs.environment }}"
+          ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
+          
+          # Get backup plan ID
+          PLAN_ID=$(aws backup list-backup-plans \
+            --query "BackupPlansList[?BackupPlanName=='$PLAN_NAME'].BackupPlanId" \
+            --output text)
+          
+          # Create selection JSON for EBS
+          cat > /tmp/backup-selection-ebs.json <<EOF
+          {
+            "SelectionName": "tx01-ebs-${{ github.event.inputs.environment }}",
+            "IamRoleArn": "$ROLE_ARN",
+            "Resources": [],
+            "ListOfTags": [
+              {
+                "ConditionType": "STRINGEQUALS",
+                "ConditionKey": "Project",
+                "ConditionValue": "tx01"
+              },
+              {
+                "ConditionType": "STRINGEQUALS",
+                "ConditionKey": "Environment",
+                "ConditionValue": "${{ github.event.inputs.environment }}"
+              },
+              {
+                "ConditionType": "STRINGEQUALS",
+                "ConditionKey": "BackupEnabled",
+                "ConditionValue": "true"
+              }
+            ]
+          }
+          EOF
+          
+          # Try to create selection
+          aws backup create-backup-selection \
+            --backup-plan-id $PLAN_ID \
+            --backup-selection file:///tmp/backup-selection-ebs.json 2>/dev/null || \
+            echo "✅ Backup selection already exists or updated"
+
+      - name: Tag RDS instances for backup
+        run: |
+          # Find RDS instances
+          RDS_INSTANCES=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ github.event.inputs.environment }}')].DBInstanceArn" \
+            --output text)
+          
+          if [ -n "$RDS_INSTANCES" ]; then
+            for RDS_ARN in $RDS_INSTANCES; do
+              echo "Tagging RDS: $RDS_ARN"
+              aws rds add-tags-to-resource \
+                --resource-name $RDS_ARN \
+                --tags \
+                  Key=BackupEnabled,Value=true \
+                  Key=BackupRetention,Value=${{ github.event.inputs.backup_retention_days }}
+              echo "✅ Tagged: $RDS_ARN"
+            done
+          else
+            echo "⚠️ No RDS instances found for tx01-${{ github.event.inputs.environment }}"
+          fi
+
+      - name: Tag EBS volumes for backup
+        run: |
+          # Find EBS volumes attached to EKS nodes
+          CLUSTER_NAME="tx01-eks-${{ github.event.inputs.environment }}"
+          
+          # Get EBS volumes from EKS cluster
+          VOLUME_IDS=$(aws ec2 describe-volumes \
+            --filters \
+              "Name=tag:kubernetes.io/cluster/$CLUSTER_NAME,Values=owned" \
+            --query "Volumes[].VolumeId" \
+            --output text)
+          
+          if [ -n "$VOLUME_IDS" ]; then
+            for VOLUME_ID in $VOLUME_IDS; do
+              echo "Tagging EBS volume: $VOLUME_ID"
+              aws ec2 create-tags \
+                --resources $VOLUME_ID \
+                --tags \
+                  Key=BackupEnabled,Value=true \
+                  Key=BackupRetention,Value=${{ github.event.inputs.backup_retention_days }} \
+                  Key=Project,Value=tx01 \
+                  Key=Environment,Value=${{ github.event.inputs.environment }}
+              echo "✅ Tagged: $VOLUME_ID"
+            done
+          else
+            echo "⚠️ No EBS volumes found for cluster $CLUSTER_NAME"
+          fi
+
+      - name: Enable automated RDS snapshots
+        run: |
+          # Find RDS instances
+          RDS_INSTANCES=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
+            --output text)
+          
+          if [ -n "$RDS_INSTANCES" ]; then
+            for RDS_ID in $RDS_INSTANCES; do
+              echo "Configuring automated snapshots for: $RDS_ID"
+              aws rds modify-db-instance \
+                --db-instance-identifier $RDS_ID \
+                --backup-retention-period ${{ github.event.inputs.backup_retention_days }} \
+                --preferred-backup-window "03:00-04:00" \
+                --apply-immediately
+              echo "✅ Configured: $RDS_ID"
+            done
+          fi
+
+      - name: Configure cross-region copy
+        if: ${{ github.event.inputs.enable_cross_region == 'true' }}
+        run: |
+          PLAN_NAME="tx01-daily-backup-${{ github.event.inputs.environment }}"
+          VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}-replica"
+          
+          # Get backup plan ID
+          PLAN_ID=$(aws backup list-backup-plans \
+            --query "BackupPlansList[?BackupPlanName=='$PLAN_NAME'].BackupPlanId" \
+            --output text)
+          
+          # Update plan with copy action
+          cat > /tmp/backup-plan-cross-region.json <<EOF
+          {
+            "BackupPlanName": "$PLAN_NAME",
+            "Rules": [
+              {
+                "RuleName": "DailyBackup",
+                "TargetBackupVaultName": "tx01-backup-vault-${{ github.event.inputs.environment }}",
+                "ScheduleExpression": "cron(${{ github.event.inputs.backup_schedule }})",
+                "StartWindowMinutes": 60,
+                "CompletionWindowMinutes": 120,
+                "Lifecycle": {
+                  "DeleteAfterDays": ${{ github.event.inputs.backup_retention_days }}
+                },
+                "CopyActions": [
+                  {
+                    "DestinationBackupVaultArn": "arn:aws:backup:${{ env.BACKUP_REGION }}:${{ steps.account.outputs.account_id }}:backup-vault:$VAULT_NAME",
+                    "Lifecycle": {
+                      "DeleteAfterDays": ${{ github.event.inputs.backup_retention_days }}
+                    }
+                  }
+                ],
+                "RecoveryPointTags": {
+                  "Project": "tx01",
+                  "Environment": "${{ github.event.inputs.environment }}",
+                  "BackupType": "automated"
+                }
+              }
+            ]
+          }
+          EOF
+          
+          echo "Updating backup plan with cross-region copy"
+          aws backup update-backup-plan \
+            --backup-plan-id $PLAN_ID \
+            --backup-plan file:///tmp/backup-plan-cross-region.json
+          echo "✅ Cross-region copy configured"
+
+      - name: Display backup configuration summary
+        run: |
+          echo "============================================"
+          echo "🗄️ Backup Configuration Summary"
+          echo "============================================"
+          echo ""
+          echo "Environment: ${{ github.event.inputs.environment }}"
+          echo "Retention: ${{ github.event.inputs.backup_retention_days }} days"
+          echo "Schedule: ${{ github.event.inputs.backup_schedule }} (UTC)"
+          echo "Cross-region: ${{ github.event.inputs.enable_cross_region }}"
+          echo ""
+          echo "📦 Resources protected:"
+          echo "  - RDS PostgreSQL databases"
+          echo "  - EBS volumes (EKS persistent storage)"
+          echo "  - Automated daily snapshots"
+          echo ""
+          echo "🔒 Backup vault: tx01-backup-vault-${{ github.event.inputs.environment }}"
+          echo "📍 Primary region: ${{ env.AWS_REGION }}"
+          if [ "${{ github.event.inputs.enable_cross_region }}" = "true" ]; then
+            echo "📍 Backup region: ${{ env.BACKUP_REGION }}"
+          fi
+          echo ""
+          echo "✅ Backup automation configured successfully!"
+          echo ""
+          echo "💡 Next steps:"
+          echo "  1. Verify backups in AWS Console: AWS Backup > Backup vaults"
+          echo "  2. Wait for first backup (scheduled at ${{ github.event.inputs.backup_schedule }} UTC)"
+          echo "  3. Test restore using the 'Restore from Backup' workflow"
+          echo ""
+
+      - name: Send Slack notification
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -z "${{ secrets.SLACK_WEBHOOK_URL }}" ]; then
+            echo "⚠️ SLACK_WEBHOOK_URL not configured, skipping notification"
+            exit 0
+          fi
+          
+          if [ "${{ job.status }}" = "success" ]; then
+            COLOR="good"
+            EMOJI="✅"
+            STATUS="SUCCESS"
+          else
+            COLOR="danger"
+            EMOJI="❌"
+            STATUS="FAILED"
+          fi
+          
+          curl -X POST "${{ secrets.SLACK_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d "{
+              \"attachments\": [{
+                \"color\": \"$COLOR\",
+                \"title\": \"$EMOJI Backup Configuration $STATUS\",
+                \"text\": \"Environment: ${{ github.event.inputs.environment }}\nRetention: ${{ github.event.inputs.backup_retention_days }} days\nCross-region: ${{ github.event.inputs.enable_cross_region }}\",
+                \"footer\": \"GitHub Actions\",
+                \"ts\": $(date +%s)
+              }]
+            }"
