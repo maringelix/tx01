@@ -40,6 +40,11 @@ jobs:
         run: |
           aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
 
+      - name: Add Helm repository
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
       - name: Create AlertManager configuration
         run: |
           cat > /tmp/alertmanager-values.yaml <<'EOF'
