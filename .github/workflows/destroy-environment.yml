@@ -285,22 +285,28 @@ jobs:
         run: |
           echo "🧹 Cleaning orphaned RDS instances..."
           
-          DB_NAME="tx01-db-${{ github.event.inputs.environment }}"
+          # Find RDS instances with tx01 prefix
+          RDS_INSTANCES=$(aws rds describe-db-instances \
+            --region ${{ env.AWS_REGION }} \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-') && contains(DBInstanceIdentifier, '-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
+            --output text)
           
-          if aws rds describe-db-instances --db-instance-identifier $DB_NAME --region ${{ env.AWS_REGION }} 2>/dev/null; then
-            echo "Deleting RDS instance: $DB_NAME"
-            
-            # Delete without final snapshot (destructive!)
-            aws rds delete-db-instance \
-              --db-instance-identifier $DB_NAME \
-              --skip-final-snapshot \
-              --delete-automated-backups \
-              --region ${{ env.AWS_REGION }} || true
+          if [ -n "$RDS_INSTANCES" ]; then
+            for DB_NAME in $RDS_INSTANCES; do
+              echo "Deleting RDS instance: $DB_NAME"
+              
+              # Delete without final snapshot (destructive!)
+              aws rds delete-db-instance \
+                --db-instance-identifier $DB_NAME \
+                --skip-final-snapshot \
+                --delete-automated-backups \
+                --region ${{ env.AWS_REGION }} || true
+            done
             
             echo "⏳ Waiting for RDS deletion..."
             sleep 60
           else
-            echo "✅ RDS instance already deleted"
+            echo "✅ No RDS instances found to delete"
           fi
       
       - name: 🧹 Clean Orphaned Load Balancers
