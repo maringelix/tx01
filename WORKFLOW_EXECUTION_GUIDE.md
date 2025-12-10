@@ -174,7 +174,70 @@
 
 ---
 
-## 🔒 Passo 7: Deploy Gatekeeper (Policy Enforcement - Opcional)
+## 🗄️ Passo 7: Configurar Backup Automation (Recomendado)
+
+**Objetivo:** Configurar backups automatizados para RDS e EBS.
+
+### Executar:
+1. Vá em: `https://github.com/maringelix/tx01/actions/workflows/configure-backup.yml`
+2. Clique em: **Run workflow**
+3. Preencha:
+   - **environment:** `stg`
+   - **backup_retention_days:** `7` (staging) ou `30` (produção)
+   - **enable_cross_region:** `false` (staging) ou `true` (produção)
+   - **backup_schedule:** `0 3 * * *` (3h AM UTC diariamente)
+4. Clique em: **Run workflow**
+
+### O que será configurado:
+- ✅ AWS Backup Vault (repositório de backups)
+- ✅ Backup Plan (política automatizada)
+- ✅ IAM Roles para AWS Backup
+- ✅ Tags em RDS e EBS para identificação
+- ✅ RDS automated snapshots habilitados
+- ✅ Lifecycle management (rotação automática)
+- ✅ Cross-region copy (se habilitado)
+
+### Recursos protegidos:
+- 🗄️ **RDS PostgreSQL** - Database completo
+- 💾 **EBS Volumes** - Persistent volumes do EKS (Prometheus, Grafana, Loki, app data)
+
+### Tempo estimado: ~3-5 minutos
+
+### 💰 Custo estimado:
+- **Staging (7 dias):** ~$1-2/mês
+- **Production (30 dias, cross-region):** ~$5-10/mês
+
+---
+
+## ♻️ Passo 8: Testar Restore (Opcional mas recomendado)
+
+**Objetivo:** Validar que backups podem ser restaurados com sucesso.
+
+### Listar backups disponíveis:
+1. Vá em: `https://github.com/maringelix/tx01/actions/workflows/restore-backup.yml`
+2. Clique em: **Run workflow**
+3. Selecione:
+   - **environment:** `stg`
+   - **resource_type:** `list-backups`
+4. Clique em: **Run workflow**
+5. Veja a lista de backups disponíveis no log
+
+### Restaurar um backup (exemplo):
+1. Copie o `Recovery Point ARN` da lista
+2. Execute o workflow novamente:
+   - **environment:** `stg`
+   - **resource_type:** `rds` ou `ebs`
+   - **recovery_point_arn:** Cole o ARN copiado
+   - **restore_to_new_resource:** `true` (recomendado para testes)
+3. Clique em: **Run workflow**
+
+### Tempo estimado:
+- RDS: 10-30 minutos
+- EBS: 5-15 minutos
+
+---
+
+## 🔒 Passo 9: Deploy Gatekeeper (Policy Enforcement - Opcional)
 
 **Objetivo:** Instalar OPA Gatekeeper para políticas de segurança.
 

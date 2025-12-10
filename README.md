@@ -5,7 +5,7 @@
 [![EKS](https://img.shields.io/badge/EKS-v1.32-blue.svg)](https://aws.amazon.com/eks/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.6.0-purple.svg)](https://www.terraform.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.6-blue.svg)](https://www.postgresql.org/)
-[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-9%20Workflows-green.svg)](https://github.com/features/actions)
+[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-11%20Workflows-green.svg)](https://github.com/features/actions)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Latest-orange.svg)](https://prometheus.io/)
 [![Grafana](https://img.shields.io/badge/Grafana-Latest-orange.svg)](https://grafana.com/)
 [![Slack Alerts](https://img.shields.io/badge/Slack-Alerts%20Enabled-purple.svg)](https://slack.com/)
@@ -356,7 +356,7 @@ Veja [GITHUB_SECRETS.md](./GITHUB_SECRETS.md) para instruções detalhadas.
 
 ### **Overview de Workflows**
 
-O projeto possui **9 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
+O projeto possui **11 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
 
 | Workflow | Emoji | Trigger | Função |
 |----------|-------|---------|--------|
@@ -367,6 +367,8 @@ O projeto possui **9 workflows automatizados** para gerenciar todo o ciclo de vi
 | EKS Deploy | ☸️ | Manual | Provisiona/deploy/destroy cluster EKS |
 | Deploy Observability Stack | 📊 | Manual | Instala Grafana Stack (Prometheus + Grafana + Loki) |
 | Configure AlertManager | 🔔 | Manual | Configura alertas do Prometheus no Slack |
+| Configure Backup Automation | 🗄️ | Manual | Configura backups automatizados (RDS, EBS, cross-region) |
+| Restore from Backup | ♻️ | Manual | Restaura recursos de backups (RDS, EBS) |
 | Switch Environment | 🔄 | Manual | Alterna entre modo EC2 ↔️ EKS |
 | Docker Build & Push | 🐳 | Push (docker/, server/, client/) | Build e push para ECR |
 
@@ -572,7 +574,108 @@ Inputs:
 
 ---
 
-### **8. 🔄 Switch Environment**
+### **8. 🗄️ Configure Backup Automation**
+Configura backups automatizados para RDS e EBS usando AWS Backup
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Inputs:
+  - environment: stg, prd
+  - backup_retention_days: 7, 14, 30, 90
+  - enable_cross_region: true/false
+  - backup_schedule: cron expression (default: 0 3 * * *)
+```
+
+**O que será configurado:**
+- ✅ **AWS Backup Vault** - Repositório seguro para backups
+- ✅ **Backup Plan** - Política diária automatizada
+- ✅ **IAM Roles** - Permissões para AWS Backup service
+- ✅ **Resource Tagging** - Tags automáticas para recursos elegíveis
+- ✅ **RDS Automated Snapshots** - Backup nativo do PostgreSQL
+- ✅ **EBS Volume Snapshots** - Backup de volumes Kubernetes (PVCs)
+- ✅ **Cross-Region Copy** - Cópia para região secundária (disaster recovery)
+- ✅ **Lifecycle Management** - Rotação automática baseada em retention
+
+**Recursos protegidos:**
+- 🗄️ **RDS PostgreSQL** - Database completo
+- 💾 **EBS Volumes** - Persistent volumes (Prometheus, Grafana, Loki, app data)
+- 📦 **Automated daily backups** - 3h AM UTC (horário de menor uso)
+
+**Retenção recomendada:**
+- Staging: 7 dias (economia de custos)
+- Production: 30-90 dias (compliance e auditoria)
+
+**Cross-region:**
+- Primary: `us-east-1`
+- Backup: `us-west-2` (proteção contra falha regional)
+
+**Quando usar:**
+- Logo após provisionar infraestrutura
+- Antes de mudanças críticas no banco de dados
+- Como parte da estratégia de disaster recovery
+
+**💰 Custo estimado:**
+- Snapshots: ~$0.05/GB/mês
+- Cross-region transfer: ~$0.02/GB (primeira cópia)
+- Exemplo: 20GB RDS + 30GB EBS = ~$2.50/mês (single region)
+
+---
+
+### **9. ♻️ Restore from Backup**
+Restaura recursos a partir de backups do AWS Backup
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Inputs:
+  - environment: stg, prd
+  - resource_type: rds, ebs, list-backups
+  - recovery_point_arn: ARN do backup (ou vazio para listar)
+  - restore_to_new_resource: true/false
+```
+
+**Fluxo de restauração:**
+
+1. **Listar backups disponíveis:**
+   - resource_type: `list-backups`
+   - Mostra tabela com ARNs, datas, tamanhos
+
+2. **Restaurar RDS:**
+   - resource_type: `rds`
+   - recovery_point_arn: `<ARN do backup>`
+   - Cria nova instância ou sobrescreve existente
+   - Mantém mesma VPC, security groups, subnet
+
+3. **Restaurar EBS:**
+   - resource_type: `ebs`
+   - recovery_point_arn: `<ARN do backup>`
+   - Cria novo volume na mesma AZ
+   - Tags automáticas para rastreamento
+
+**Segurança:**
+- ✅ Por padrão cria NOVO recurso (não sobrescreve)
+- ✅ Validação de IAM roles e permissões
+- ✅ Monitoramento de progresso em tempo real
+- ✅ Notificação Slack ao completar/falhar
+
+**Cenários de uso:**
+- 🔴 **Disaster Recovery** - Falha catastrófica do RDS/EBS
+- 🔄 **Rollback** - Reverter mudança problemática
+- 🧪 **Testing** - Criar ambiente de testes com dados reais
+- 📊 **Analytics** - Copiar dados para análise offline
+
+**Tempo de restore:**
+- RDS: 10-30 minutos (depende do tamanho)
+- EBS: 5-15 minutos (depende do tamanho)
+
+**Quando usar:**
+- Após falha de banco de dados
+- Para testar processo de DR
+- Para criar ambiente de staging com dados reais
+- Em caso de corrupção de dados
+
+---
+
+### **10. 🔄 Switch Environment**
 Alterna entre modo EC2 e modo EKS
 
 ```yaml
@@ -590,7 +693,7 @@ Modes:
 
 ---
 
-### **9. 🐳 Docker Build & Push**
+### **11. 🐳 Docker Build & Push**
 Build e push de imagens Docker para ECR
 
 ```yaml
@@ -1261,6 +1364,7 @@ Modo EC2 (Desenvolvimento):
 - [x] **✅ Testes Automatizados**: Terraform validation tests implementados
 - [x] **✅ Drift Detection**: Terraform Plan workflow com relatórios em PRs
 - [x] **✅ Alertas Avançados**: Slack integration configurada (Critical, Warning, Info)
+- [x] **✅ Backup Automation**: AWS Backup configurado (RDS, EBS, cross-region, 7-90 dias)
 - [ ] **Logs Centralizados**: Expandir queries e dashboards do Loki
 - [ ] **APM (Application Performance Monitoring)**: Adicionar distributed tracing (Tempo/Jaeger)
 - [ ] **Blue/Green Deployment**: Implementar estratégia de deploy avançada
