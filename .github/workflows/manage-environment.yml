@@ -1,4 +1,4 @@
-name: ⚡ Manage Environment
+name: ⚡ Manage Environment (EKS + RDS)
 
 on:
   workflow_dispatch:
@@ -8,9 +8,9 @@ on:
         required: true
         type: choice
         options:
-          - start
-          - stop
-          - status
+          - shutdown  # Desliga EKS + RDS
+          - startup   # Liga EKS + RDS
+          - status    # Verifica status
       environment:
         description: 'Environment'
         required: true
@@ -22,10 +22,11 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  CLUSTER_NAME: tx01-eks-${{ inputs.environment }}
 
 jobs:
-  manage-ec2:
-    name: ${{ inputs.action }} EC2 Instances
+  manage-rds:
+    name: ${{ inputs.action }} RDS Database
     runs-on: ubuntu-latest
     
     steps:
@@ -36,84 +37,202 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: 🔍 Get EC2 Instance IDs
-        id: get-instances
+      - name: 🔍 Get RDS Instance
+        id: get-rds
         run: |
-          INSTANCE_IDS=$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=tx01-ec2-*-${{ inputs.environment }}" \
-                      "Name=instance-state-name,Values=running,stopped" \
-            --query 'Reservations[].Instances[].InstanceId' \
-            --output text)
+          RDS_ID=$(aws rds describe-db-instances \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ inputs.environment }}')].DBInstanceIdentifier" \
+            --output text | head -1)
           
-          if [ -z "$INSTANCE_IDS" ]; then
-            echo "⚠️ No EC2 instances found for environment: ${{ inputs.environment }}"
+          if [ -z "$RDS_ID" ]; then
+            echo "⚠️ No RDS instance found for environment: ${{ inputs.environment }}"
+            echo "rds_found=false" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          echo "instances=$INSTANCE_IDS" >> $GITHUB_OUTPUT
-          echo "✅ Found instances: $INSTANCE_IDS"
+          echo "rds_id=$RDS_ID" >> $GITHUB_OUTPUT
+          echo "rds_found=true" >> $GITHUB_OUTPUT
+          echo "✅ Found RDS: $RDS_ID"
+          
+          # Get current status
+          STATUS=$(aws rds describe-db-instances \
+            --db-instance-identifier $RDS_ID \
+            --query 'DBInstances[0].DBInstanceStatus' \
+            --output text)
+          
+          echo "current_status=$STATUS" >> $GITHUB_OUTPUT
+          echo "📊 Current status: $STATUS"
 
-      - name: ▶️ Start EC2 Instances
-        if: inputs.action == 'start' && steps.get-instances.outputs.instances != ''
+      - name: ⏸️ Stop RDS Database
+        if: inputs.action == 'shutdown' && steps.get-rds.outputs.rds_found == 'true' && steps.get-rds.outputs.current_status == 'available'
         run: |
-          aws ec2 start-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "⏳ Waiting for instances to start..."
-          aws ec2 wait instance-running --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "✅ All instances are now running!"
+          echo "Stopping RDS: ${{ steps.get-rds.outputs.rds_id }}"
+          aws rds stop-db-instance --db-instance-identifier ${{ steps.get-rds.outputs.rds_id }}
+          echo "✅ RDS stop initiated"
+          echo "⚠️ Note: RDS will auto-restart after 7 days"
 
-      - name: ⏸️ Stop EC2 Instances
-        if: inputs.action == 'stop' && steps.get-instances.outputs.instances != ''
+      - name: ▶️ Start RDS Database
+        if: inputs.action == 'startup' && steps.get-rds.outputs.rds_found == 'true' && steps.get-rds.outputs.current_status == 'stopped'
         run: |
-          aws ec2 stop-instances --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "⏳ Waiting for instances to stop..."
-          aws ec2 wait instance-stopped --instance-ids ${{ steps.get-instances.outputs.instances }}
-          echo "✅ All instances are now stopped!"
+          echo "Starting RDS: ${{ steps.get-rds.outputs.rds_id }}"
+          aws rds start-db-instance --db-instance-identifier ${{ steps.get-rds.outputs.rds_id }}
+          echo "✅ RDS start initiated (takes ~5 minutes)"
 
-      - name: 📊 Check Status
-        if: steps.get-instances.outputs.instances != ''
+      - name: 📊 RDS Status
+        if: steps.get-rds.outputs.rds_found == 'true'
+        run: |
+          RDS_STATUS=$(aws rds describe-db-instances \
+            --db-instance-identifier ${{ steps.get-rds.outputs.rds_id }} \
+            --query 'DBInstances[0].[DBInstanceIdentifier,DBInstanceClass,DBInstanceStatus,Engine,AllocatedStorage]' \
+            --output text)
+          
+          echo "## 🗄️ RDS Database Status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Status:** ${{ steps.get-rds.outputs.current_status }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          echo "$RDS_STATUS" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  manage-eks:
+    name: ${{ inputs.action }} EKS Cluster
+    runs-on: ubuntu-latest
+    needs: manage-rds
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🔑 Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+
+      - name: 🔍 Check EKS Cluster
+        id: check-eks
+        run: |
+          if aws eks describe-cluster --name ${{ env.CLUSTER_NAME }} 2>/dev/null; then
+            echo "eks_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ EKS cluster exists: ${{ env.CLUSTER_NAME }}"
+          else
+            echo "eks_exists=false" >> $GITHUB_OUTPUT
+            echo "⚠️ EKS cluster not found: ${{ env.CLUSTER_NAME }}"
+          fi
+
+      - name: ⏸️ Shutdown EKS Cluster
+        if: inputs.action == 'shutdown' && steps.check-eks.outputs.eks_exists == 'true'
+        run: |
+          cd terraform/${{ inputs.environment }}
+          
+          echo "🔧 Initializing Terraform..."
+          terraform init
+          
+          echo "⏸️ Destroying EKS cluster (keeping VPC, RDS, etc)..."
+          terraform destroy \
+            -target='module.infrastructure.module.eks[0].aws_eks_cluster.main' \
+            -target='module.infrastructure.module.eks[0].aws_eks_node_group.main' \
+            -target='module.infrastructure.module.eks[0].aws_iam_role.eks_cluster' \
+            -target='module.infrastructure.module.eks[0].aws_iam_role.eks_nodes' \
+            -auto-approve
+          
+          echo "✅ EKS cluster destroyed successfully"
+          echo "💰 Saving ~\$133/month"
+
+      - name: ▶️ Start EKS Cluster  
+        if: inputs.action == 'startup' && steps.check-eks.outputs.eks_exists == 'false'
+        run: |
+          cd terraform/${{ inputs.environment }}
+          
+          echo "🔧 Initializing Terraform..."
+          terraform init
+          
+          echo "▶️ Creating EKS cluster..."
+          terraform apply -auto-approve
+          
+          echo "✅ EKS cluster created successfully"
+          
+          # Configure kubectl
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }}
+          
+          echo "📦 Redeploying application..."
+          kubectl apply -f ../../k8s/
+          
+          echo "⏳ Waiting for pods to be ready..."
+          kubectl wait --for=condition=ready pod -l app=dx01-app --timeout=300s || true
+          
+          echo "✅ Application redeployed"
+
+      - name: 📊 Environment Status
+        if: inputs.action == 'status'
         run: |
           echo "## 📊 Environment Status: ${{ inputs.environment }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          aws ec2 describe-instances \
-            --instance-ids ${{ steps.get-instances.outputs.instances }} \
-            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value|[0],InstanceId,InstanceType,State.Name,PublicIpAddress]' \
-            --output table >> $GITHUB_STEP_SUMMARY
-
-      - name: 💰 Cost Estimate
-        if: inputs.action == 'status' || inputs.action == 'start' || inputs.action == 'stop'
-        run: |
-          INSTANCE_COUNT=$(echo "${{ steps.get-instances.outputs.instances }}" | wc -w)
+          # EKS Status
+          if [ "${{ steps.check-eks.outputs.eks_exists }}" == "true" ]; then
+            echo "### ☸️ EKS Cluster: **RUNNING** ✅" >> $GITHUB_STEP_SUMMARY
+            
+            aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null || true
+            
+            NODE_COUNT=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+            POD_COUNT=$(kubectl get pods --all-namespaces --no-headers 2>/dev/null | wc -l || echo "0")
+            
+            echo "- **Nodes:** $NODE_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "- **Pods:** $POD_COUNT" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ☸️ EKS Cluster: **STOPPED** 💤" >> $GITHUB_STEP_SUMMARY
+          fi
           
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+      - name: 💰 Cost Summary
+        run: |
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## 💰 Monthly Cost Estimate" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Resource | Running | Stopped |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|---------|---------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **$INSTANCE_COUNT× t2.micro** | ~\$17/mês | \$0 |" >> $GITHUB_STEP_SUMMARY
-          echo "| **ALB** | ~\$20/mês | ~\$20/mês ⚠️ |" >> $GITHUB_STEP_SUMMARY
-          echo "| **EBS (16GB)** | \$1.28/mês | \$1.28/mês |" >> $GITHUB_STEP_SUMMARY
-          echo "| **ECR + S3** | \$0.10/mês | \$0.10/mês |" >> $GITHUB_STEP_SUMMARY
-          echo "| **TOTAL** | **~\$38/mês** | **~\$21/mês** |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Note:** ALB continues charging even with stopped EC2 instances." >> $GITHUB_STEP_SUMMARY
+          echo "| **EKS Control Plane** | \$73.00 | \$0.00 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **4× t3.small nodes** | \$60.16 | \$0.00 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **RDS t4g.micro** | \$12.41 | \$0.00 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **RDS Storage (20GB)** | \$2.30 | \$2.30 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **NAT Gateways (2×)** | \$65.70 | \$65.70 ⚠️ |" >> $GITHUB_STEP_SUMMARY
+          echo "| **EBS Volumes** | \$4.40 | \$0.00 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **S3 + ECR** | \$0.30 | \$0.30 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **━━━━━━━━━━━━** | **━━━━━━━━** | **━━━━━━━━** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **\$218.27/mês** | **\$68.30/mês** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          if [ "${{ inputs.action }}" == "stop" ]; then
-            echo "✅ **Savings:** ~\$17/mês with EC2 stopped" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ inputs.action }}" == "shutdown" ]; then
+            echo "✅ **Savings:** ~\$150/mês with EKS + RDS stopped" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⏰ **Your \$92 credit will last:** ~40 days" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ inputs.action }}" == "startup" ]; then
+            echo "⚠️ **Monthly cost:** ~\$218/mês with everything running" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "⏰ **Your \$92 credit will last:** ~12 days" >> $GITHUB_STEP_SUMMARY
           fi
-
-      - name: 🔗 Get ALB URL
-        if: inputs.action == 'start'
-        run: |
-          ALB_DNS=$(aws elbv2 describe-load-balancers \
-            --names "tx01-alb-${{ inputs.environment }}" \
-            --query 'LoadBalancers[0].DNSName' \
-            --output text 2>/dev/null || echo "Not found")
           
-          if [ "$ALB_DNS" != "Not found" ] && [ "$ALB_DNS" != "None" ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note:** NAT Gateways cannot be stopped and cost \$65.70/mês" >> $GITHUB_STEP_SUMMARY
+
+      - name: 🔗 Application URL
+        if: inputs.action == 'startup' || (inputs.action == 'status' && steps.check-eks.outputs.eks_exists == 'true')
+        run: |
+          aws eks update-kubeconfig --name ${{ env.CLUSTER_NAME }} --region ${{ env.AWS_REGION }} 2>/dev/null || true
+          
+          INGRESS_URL=$(kubectl get ingress tx01-ingress -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Not ready yet")
+          
+          if [ "$INGRESS_URL" != "Not ready yet" ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "## 🔗 Application URL" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**ALB:** http://$ALB_DNS" >> $GITHUB_STEP_SUMMARY
+            echo "**URL:** http://$INGRESS_URL" >> $GITHUB_STEP_SUMMARY
           fi
