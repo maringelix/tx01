@@ -5,9 +5,10 @@
 [![EKS](https://img.shields.io/badge/EKS-v1.32-blue.svg)](https://aws.amazon.com/eks/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.6.0-purple.svg)](https://www.terraform.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.6-blue.svg)](https://www.postgresql.org/)
-[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-8%20Workflows-green.svg)](https://github.com/features/actions)
+[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-9%20Workflows-green.svg)](https://github.com/features/actions)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Latest-orange.svg)](https://prometheus.io/)
 [![Grafana](https://img.shields.io/badge/Grafana-Latest-orange.svg)](https://grafana.com/)
+[![Slack Alerts](https://img.shields.io/badge/Slack-Alerts%20Enabled-purple.svg)](https://slack.com/)
 [![Quality Gate](https://img.shields.io/badge/Quality%20Gate-Passed-brightgreen.svg)](https://sonarcloud.io/)
 [![Security](https://img.shields.io/badge/Security-C%20Rating-yellow.svg)](https://sonarcloud.io/)
 [![Maintainability](https://img.shields.io/badge/Maintainability-A%20Rating-brightgreen.svg)](https://sonarcloud.io/)
@@ -162,7 +163,8 @@ Este projeto demonstra uma arquitetura cloud moderna com:
 - **Loki**: Agregação de logs centralizada
 - **Promtail**: Coleta de logs dos pods
 - **AlertManager**: Gerenciamento e roteamento de alertas
-- **15+ Alertas Críticos**: Monitoramento proativo
+- **Slack Integration**: Notificações em tempo real (Critical, Warning, Info)
+- **15+ Alertas Críticos**: Monitoramento proativo com notificações automáticas
 
 ## 📁 Estrutura do Projeto
 
@@ -354,7 +356,7 @@ Veja [GITHUB_SECRETS.md](./GITHUB_SECRETS.md) para instruções detalhadas.
 
 ### **Overview de Workflows**
 
-O projeto possui **8 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
+O projeto possui **9 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
 
 | Workflow | Emoji | Trigger | Função |
 |----------|-------|---------|--------|
@@ -364,6 +366,7 @@ O projeto possui **8 workflows automatizados** para gerenciar todo o ciclo de vi
 | Terraform Deploy | 🚀 | Manual, Push | Deploy infraestrutura base (VPC, EC2, ALB, RDS) |
 | EKS Deploy | ☸️ | Manual | Provisiona/deploy/destroy cluster EKS |
 | Deploy Observability Stack | 📊 | Manual | Instala Grafana Stack (Prometheus + Grafana + Loki) |
+| Configure AlertManager | 🔔 | Manual | Configura alertas do Prometheus no Slack |
 | Switch Environment | 🔄 | Manual | Alterna entre modo EC2 ↔️ EKS |
 | Docker Build & Push | 🐳 | Push (docker/, server/, client/) | Build e push para ECR |
 
@@ -524,7 +527,52 @@ Configure o secret `GRAFANA_PASSWORD` no GitHub antes de executar:
 
 ---
 
-### **7. 🔄 Switch Environment**
+### **7. 🔔 Configure AlertManager**
+Configura integração do Prometheus AlertManager com Slack
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Inputs:
+  - slack_channel: Nome do canal (sem #)
+  - severity_filter: critical, warning, info
+```
+
+**Pré-requisitos:**
+1. Criar Incoming Webhook no Slack:
+   - Acesse https://api.slack.com/apps
+   - Create App > From scratch
+   - Ative "Incoming Webhooks"
+   - Adicione webhook ao workspace
+   - Copie a URL
+
+2. Adicionar secret no GitHub:
+   - `Settings > Secrets > Actions`
+   - Nome: `SLACK_WEBHOOK_URL`
+   - Value: URL do webhook
+
+**Stack configurado:**
+- ✅ **AlertManager** - 3 receivers (Critical, Warning, Info)
+- ✅ **Slack Notifications** - Mensagens formatadas com cores
+- ✅ **@channel mention** - Para alertas críticos
+- ✅ **Resolved alerts** - Notificação quando problema é resolvido
+- ✅ **Test alert** - Enviado automaticamente após configuração
+
+**Tipos de alertas:**
+- 🚨 **Critical**: KubePodCrashLooping, KubeNodeNotReady, TargetDown (menciona @channel)
+- ⚠️ **Warning**: KubePodNotReady, KubeDeploymentReplicasMismatch, Resource overcommit
+- 🔔 **Info**: Alertas informativos gerais
+- ✅ **Resolved**: Notificação verde quando alerta é resolvido
+
+**Quando usar:**
+- Após instalar Grafana Stack
+- Quando precisar de notificações em tempo real
+- Para integrar com ferramentas de comunicação da equipe
+
+**Documentação:** Veja alertas ativos em `k8s/prometheus-alerts.yaml`
+
+---
+
+### **8. 🔄 Switch Environment**
 Alterna entre modo EC2 e modo EKS
 
 ```yaml
@@ -542,7 +590,7 @@ Modes:
 
 ---
 
-### **8. 🐳 Docker Build & Push**
+### **9. 🐳 Docker Build & Push**
 Build e push de imagens Docker para ECR
 
 ```yaml
@@ -1212,7 +1260,7 @@ Modo EC2 (Desenvolvimento):
 - [x] **✅ Monitoramento**: Grafana Stack implementado (Prometheus + Grafana + Loki)
 - [x] **✅ Testes Automatizados**: Terraform validation tests implementados
 - [x] **✅ Drift Detection**: Terraform Plan workflow com relatórios em PRs
-- [ ] **Alertas Avançados**: Configurar notificações via SNS/Slack/Email
+- [x] **✅ Alertas Avançados**: Slack integration configurada (Critical, Warning, Info)
 - [ ] **Logs Centralizados**: Expandir queries e dashboards do Loki
 - [ ] **APM (Application Performance Monitoring)**: Adicionar distributed tracing (Tempo/Jaeger)
 - [ ] **Blue/Green Deployment**: Implementar estratégia de deploy avançada

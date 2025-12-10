@@ -117,6 +117,9 @@
 ### O que será instalado:
 - ✅ Prometheus (coleta de métricas)
 - ✅ Grafana (visualização)
+- ✅ Loki (agregação de logs)
+- ✅ Promtail (coleta de logs)
+- ✅ AlertManager (gerenciamento de alertas)
 - ✅ kube-state-metrics
 - ✅ node-exporter
 - ✅ Dashboards pré-configurados
@@ -125,7 +128,53 @@
 
 ---
 
-## 🔒 Passo 5: Deploy Gatekeeper (Policy Enforcement - Opcional)
+## 🔔 Passo 5: Configurar Alertas no Slack
+
+**Objetivo:** Integrar AlertManager com Slack para notificações em tempo real.
+
+### Pré-requisitos:
+1. **Criar Webhook no Slack:**
+   - Acesse: https://api.slack.com/apps
+   - Create App → From scratch
+   - Nome: "Prometheus Alerts"
+   - Ative "Incoming Webhooks"
+   - Adicione webhook ao workspace
+   - Escolha canal (ex: `#alerts`)
+   - Copie a URL do webhook
+
+2. **Adicionar Secret no GitHub:**
+   - Vá em: `https://github.com/maringelix/tx01/settings/secrets/actions`
+   - Clique: **New repository secret**
+   - Name: `SLACK_WEBHOOK_URL`
+   - Value: URL do webhook
+   - Clique: **Add secret**
+
+### Executar:
+1. Vá em: `https://github.com/maringelix/tx01/actions/workflows/configure-alertmanager.yml`
+2. Clique em: **Run workflow**
+3. Preencha:
+   - **slack_channel:** Nome do canal (sem #), ex: `alerts`
+   - **severity_filter:** `warning` (recomendado)
+4. Clique em: **Run workflow**
+
+### O que será configurado:
+- ✅ AlertManager com integração Slack
+- ✅ 3 receivers (Critical, Warning, Info)
+- ✅ Notificações formatadas com cores
+- ✅ @channel mention para alertas críticos
+- ✅ Alerta de teste enviado automaticamente
+
+### Tipos de alertas:
+- 🚨 **Critical**: KubePodCrashLooping, KubeNodeNotReady, TargetDown
+- ⚠️ **Warning**: KubePodNotReady, KubeDeploymentReplicasMismatch
+- 🔔 **Info**: Alertas informativos
+- ✅ **Resolved**: Notificação quando problema é resolvido
+
+### Tempo estimado: ~2 minutos
+
+---
+
+## 🔒 Passo 7: Deploy Gatekeeper (Policy Enforcement - Opcional)
 
 **Objetivo:** Instalar OPA Gatekeeper para políticas de segurança.
 
@@ -139,7 +188,8 @@
 
 ### O que será instalado:
 - ✅ Gatekeeper (OPA)
-- ✅ Policies de segurança (block privileged containers, etc)
+- ✅ 7 políticas de segurança em modo dryrun
+- ✅ Block privileged containers, host paths, etc
 
 ### Tempo estimado: ~2-3 minutos
 

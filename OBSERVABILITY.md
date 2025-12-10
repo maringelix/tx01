@@ -9,6 +9,7 @@ Este guia mostra como instalar e configurar o Grafana Stack (Prometheus + Grafan
 - **Loki**: Agregação de logs
 - **Promtail**: Coleta de logs dos pods
 - **AlertManager**: Gerenciamento de alertas
+- **Slack Integration**: Notificações em tempo real (Critical, Warning, Info) 🔔
 
 ## 🚀 Instalação Rápida
 
@@ -246,14 +247,92 @@ O Grafana Stack é **gratuito** (open source), mas considera custos AWS:
 
 **Dica**: Use `port-forward` em desenvolvimento para economizar o LoadBalancer.
 
+## 🔔 Configurar Alertas no Slack
+
+### Passo 1: Criar Webhook no Slack
+
+1. Acesse https://api.slack.com/apps
+2. Clique **"Create New App"** → **"From scratch"**
+3. Nome: "Prometheus Alerts" (ou nome de sua preferência)
+4. Escolha seu workspace
+5. Em **"Features"** → **"Incoming Webhooks"** → Ative
+6. Clique **"Add New Webhook to Workspace"**
+7. Escolha o canal (ex: `#alerts`)
+8. Copie a URL do webhook (`https://hooks.slack.com/services/T.../B.../...`)
+
+### Passo 2: Adicionar Secret no GitHub
+
+1. Vá em: `Settings > Secrets and variables > Actions`
+2. Clique **"New repository secret"**
+3. Name: `SLACK_WEBHOOK_URL`
+4. Value: Cole a URL do webhook copiada
+5. Clique **"Add secret"**
+
+### Passo 3: Executar Workflow
+
+1. Acesse **Actions** → **🔔 Configure AlertManager** → **Run workflow**
+2. Preencha:
+   - **Slack channel**: Nome do canal (sem #), ex: `alerts`
+   - **Minimum severity**: `warning` (recomendado)
+3. Clique **Run workflow**
+
+### Tipos de Alertas Configurados
+
+- 🚨 **Critical Alerts** (menciona @channel):
+  - KubePodCrashLooping
+  - KubeNodeNotReady
+  - KubePersistentVolumeFillingUp
+  - TargetDown
+
+- ⚠️ **Warning Alerts**:
+  - KubePodNotReady (>15 min)
+  - KubeDeploymentReplicasMismatch
+  - KubeMemoryOvercommit
+  - KubeCPUOvercommit
+
+- 🔔 **Info Alerts**:
+  - Alertas informativos gerais
+
+- ✅ **Resolved Alerts**:
+  - Notificação verde quando problema é resolvido
+
+### Formato das Mensagens
+
+```
+🚨 [CRITICAL] KubePodCrashLooping
+@channel CRITICAL ALERT
+
+Alert: KubePodCrashLooping
+Summary: Pod is crash looping
+Description: Pod dx01-app-xyz is crash looping in namespace default
+Cluster: tx01-eks-stg
+Namespace: default
+Pod: dx01-app-xyz
+Started: 2025-12-10 15:30:45
+```
+
+### Testar Alertas
+
+O workflow envia automaticamente um alerta de teste após configuração. Você pode também testar manualmente:
+
+```bash
+# Port-forward para AlertManager
+kubectl port-forward -n monitoring svc/kube-prometheus-stack-alertmanager 9093:9093
+
+# Acesse: http://localhost:9093
+# Veja alertas ativos e silenciados
+```
+
+---
+
 ## 🎓 Próximos Passos
 
 1. ✅ Instalar Grafana Stack
-2. 📊 Importar dashboards prontos
-3. 🔔 Configurar alertas críticos
-4. 📧 Integrar com SNS/Email para notificações
-5. 📈 Criar dashboards customizados para sua aplicação
-6. 📝 Adicionar métricas customizadas no código
+2. ✅ Configurar alertas no Slack
+3. 📊 Importar dashboards prontos
+4. 📈 Criar dashboards customizados para sua aplicação
+5. 📝 Adicionar métricas customizadas no código
+6. 🔍 Explorar queries Loki para análise de logs
 
 ## 📚 Recursos
 
