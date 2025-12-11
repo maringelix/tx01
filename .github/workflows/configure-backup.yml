@@ -334,7 +334,7 @@ jobs:
             echo "⚠️ No EBS volumes found for cluster $CLUSTER_NAME"
           fi
 
-      - name: Enable automated RDS snapshots
+      - name: Verify RDS backup configuration
         run: |
           # Find RDS instances (tx01-db-stg or tx01-rds-stg)
           RDS_INSTANCES=$(aws rds describe-db-instances \
@@ -343,14 +343,15 @@ jobs:
           
           if [ -n "$RDS_INSTANCES" ]; then
             for RDS_ID in $RDS_INSTANCES; do
-              echo "Configuring automated snapshots for: $RDS_ID"
-              aws rds modify-db-instance \
+              echo "Checking backup configuration for: $RDS_ID"
+              RETENTION=$(aws rds describe-db-instances \
                 --db-instance-identifier $RDS_ID \
-                --backup-retention-period ${{ github.event.inputs.backup_retention_days }} \
-                --preferred-backup-window "03:00-04:00" \
-                --apply-immediately
-              echo "✅ Configured: $RDS_ID"
+                --query "DBInstances[0].BackupRetentionPeriod" \
+                --output text)
+              echo "✅ Current retention period: $RETENTION days (AWS Backup will manage additional backups)"
             done
+          else
+            echo "⚠️ No RDS instances found"
           fi
 
       - name: Configure cross-region copy
