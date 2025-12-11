@@ -5,7 +5,7 @@
 [![EKS](https://img.shields.io/badge/EKS-v1.32-blue.svg)](https://aws.amazon.com/eks/)
 [![Terraform](https://img.shields.io/badge/Terraform-1.6.0-purple.svg)](https://www.terraform.io/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-17.6-blue.svg)](https://www.postgresql.org/)
-[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-11%20Workflows-green.svg)](https://github.com/features/actions)
+[![GitHub Actions](https://img.shields.io/badge/CI%2FCD-20%20Workflows-green.svg)](https://github.com/features/actions)
 [![Prometheus](https://img.shields.io/badge/Prometheus-Latest-orange.svg)](https://prometheus.io/)
 [![Grafana](https://img.shields.io/badge/Grafana-Latest-orange.svg)](https://grafana.com/)
 [![Slack Alerts](https://img.shields.io/badge/Slack-Alerts%20Enabled-purple.svg)](https://slack.com/)
@@ -82,19 +82,25 @@ Este projeto demonstra uma arquitetura cloud moderna com:
 ┌─────────────────────────────────────────────────────────────┐
 │                        AWS Cloud                             │
 │                                                              │
-│  Internet → ALB Ingress → EKS Cluster v1.32                │
-│               (Auto)      ├─ Node 1 (t3.small)              │
-│                           │  └─ Pod dx01-app                │
-│                           ├─ Node 2 (t3.small)              │
-│                           │  └─ Pod dx01-app                │
-│                           └─ HPA (2-10 pods)                │
+│  Internet → ALB (via AWS LB Controller) → EKS v1.32        │
+│               ├─ Ingress (auto-created)                     │
+│               └─ Service (LoadBalancer)                     │
+│                           │                                  │
+│                    EKS Cluster v1.32                        │
+│                    ├─ Node 1 (t3.small)                     │
+│                    │  └─ Pod dx01-app                       │
+│                    ├─ Node 2 (t3.small)                     │
+│                    │  └─ Pod dx01-app                       │
+│                    ├─ Node 3 (t3.small)                     │
+│                    ├─ Node 4 (t3.small)                     │
+│                    └─ HPA (2-10 pods)                       │
 │                                                              │
 │             ↓ (Security Groups)                             │
 │                                                              │
 │            RDS PostgreSQL 17.6 (t4g.micro)                  │
 │            ├─ Database: tx01_stg                            │
 │            ├─ Tables: visits, app_users                     │
-│            └─ Backup: 1 dia (staging)                       │
+│            └─ Backup: AWS Backup (7 dias) + RDS Snapshots  │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -356,21 +362,34 @@ Veja [GITHUB_SECRETS.md](./GITHUB_SECRETS.md) para instruções detalhadas.
 
 ### **Overview de Workflows**
 
-O projeto possui **11 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
+O projeto possui **20 workflows automatizados** para gerenciar todo o ciclo de vida da infraestrutura:
 
 | Workflow | Emoji | Trigger | Função |
 |----------|-------|---------|--------|
+| **CI/CD & Validation** | | | |
 | Tests | 🧪 | Push, PR | Valida Terraform (fmt, validate, test) |
-| Terraform Plan | 📊 | Pull Request | Gera relatório de convergência (add/change/destroy) |
+| Terraform Validate | ✅ | Push, PR | Valida sintaxe Terraform |
+| Terraform Plan | 📊 | Pull Request | Gera relatório de convergência |
+| Docker Build & Push | 🐳 | Push (docker/, server/, client/) | Build e push para ECR com Trivy scan |
+| **Infrastructure** | | | |
 | Terraform Bootstrap | 🏗️ | Manual | Cria backend S3 + DynamoDB |
-| Terraform Deploy | 🚀 | Manual, Push | Deploy infraestrutura base (VPC, EC2, ALB, RDS) |
+| Terraform Deploy | 🚀 | Manual, Push | Deploy infraestrutura base |
 | EKS Deploy | ☸️ | Manual | Provisiona/deploy/destroy cluster EKS |
-| Deploy Observability Stack | 📊 | Manual | Instala Grafana Stack (Prometheus + Grafana + Loki) |
-| Configure AlertManager | 🔔 | Manual | Configura alertas do Prometheus no Slack |
-| Configure Backup Automation | 🗄️ | Manual | Configura backups automatizados (RDS, EBS, cross-region) |
-| Restore from Backup | ♻️ | Manual | Restaura recursos de backups (RDS, EBS) |
 | Switch Environment | 🔄 | Manual | Alterna entre modo EC2 ↔️ EKS |
-| Docker Build & Push | 🐳 | Push (docker/, server/, client/) | Build e push para ECR |
+| Manage Environment | 🎛️ | Manual | Shutdown/Startup de EKS + RDS (economia) |
+| Destroy Environment | 💣 | Manual | Destrói ambiente completo (preserva state) |
+| Scale EKS Nodes | 📈 | Manual | Ajusta número de nodes (0-10) |
+| Destroy & Recreate NodeGroup | 🔄 | Manual | Recria node group (troubleshooting) |
+| Terraform Import EBS CSI | 📥 | Manual | Importa EBS CSI driver ao state |
+| **Observability** | | | |
+| Deploy Observability Stack | 📊 | Manual | Instala Grafana Stack completo |
+| Deploy Observability Micro | 📊 | Manual | Instala versão otimizada (low resources) |
+| Configure AlertManager | 🔔 | Manual | Configura alertas Slack |
+| Deploy Gatekeeper | 🛡️ | Manual | Instala OPA Gatekeeper (policies) |
+| Deploy Gatekeeper Micro | 🛡️ | Manual | Versão otimizada do Gatekeeper |
+| **Backup & Recovery** | | | |
+| Configure Backup Automation | 🗄️ | Manual | Configura AWS Backup (RDS, EBS) |
+| Restore from Backup | ♻️ | Manual | Restaura recursos de backups |
 
 ---
 
@@ -675,7 +694,83 @@ Inputs:
 
 ---
 
-### **10. 🔄 Switch Environment**
+### **10. 🎛️ Manage Environment**
+Gerencia shutdown/startup de EKS e RDS para economia de custos
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Inputs:
+  - environment: stg, prd
+  - action: shutdown, startup
+```
+
+**O que faz:**
+
+**Shutdown Mode:**
+- ⏸️ Para o cluster EKS (destroy via Terraform)
+- ⏸️ Para a instância RDS (aws rds stop-db-instance)
+- 💰 Reduz custo de $218/mês → $70/mês
+- ⚠️ Volumes EBS são mantidos (dados preservados)
+- ⚠️ RDS para automaticamente por até 7 dias
+
+**Startup Mode:**
+- ▶️ Recria cluster EKS (terraform apply)
+- ▶️ Reinicia instância RDS (aws rds start-db-instance)
+- 🚀 Redeploy automático da aplicação
+- ✅ Restaura ambiente completo em ~10 minutos
+
+**Quando usar:**
+- 🌙 **Shutdown noturno** - Economizar durante off-hours
+- 📅 **Fim de semana** - Desligar sexta à noite, ligar segunda de manhã
+- 💰 **Economia de crédito** - Reduzir queima de AWS credits
+- 🧪 **Ambiente de dev** - Ligar apenas quando estiver desenvolvendo
+
+**Exemplo de economia:**
+- Rodando 24/7: $218/mês = $7.27/dia
+- Shutdown 16h/dia: $70/mês = $2.33/dia
+- **Economia: 68%** ($148/mês)
+
+---
+
+### **11. 💣 Destroy Environment**
+Destrói ambiente completo preservando Terraform state
+
+```yaml
+Trigger: workflow_dispatch (manual)
+Inputs:
+  - environment: stg, prd
+```
+
+**O que faz:**
+- 🗑️ Remove cluster EKS completo
+- 🗑️ Remove instância RDS
+- 🗑️ Remove VPC, subnets, security groups
+- 🗑️ Remove volumes EBS
+- ✅ **Preserva:** S3 backend, DynamoDB locks, AWS Backup vault
+- 💰 Reduz custo para $1.20/mês (S3 + DynamoDB + Backups)
+
+**Multi-pass cleanup:**
+- 🔄 Pass 1: Terraform destroy (recursos principais)
+- 🔄 Pass 2: Orphaned resources (ENIs, security groups)
+- 🔄 Pass 3: Backup verification (confirma que backups existem)
+
+**Segurança:**
+- ⚠️ Requer confirmação manual do environment
+- ✅ Valida existência de backups antes de destruir RDS
+- ✅ Lista recursos órfãos para cleanup manual se necessário
+- 📊 Relatório completo de recursos destruídos
+
+**Quando usar:**
+- 🏁 **Projeto finalizado** - Desativar ambiente permanentemente
+- 💰 **Economia extrema** - Reduzir custo ao mínimo
+- 🔄 **Rebuild completo** - Destruir e recriar do zero
+- 🧹 **Cleanup** - Remover ambiente de teste/staging
+
+**Tempo:** ~15-20 minutos
+
+---
+
+### **12. 🔄 Switch Environment**
 Alterna entre modo EC2 e modo EKS
 
 ```yaml
@@ -1365,15 +1460,16 @@ Modo EC2 (Desenvolvimento):
 - [x] **✅ Drift Detection**: Terraform Plan workflow com relatórios em PRs
 - [x] **✅ Alertas Avançados**: Slack integration configurada (Critical, Warning, Info)
 - [x] **✅ Backup Automation**: AWS Backup configurado (RDS, EBS, cross-region, 7-90 dias)
+- [x] **✅ Container Security**: Trivy scan implementado no pipeline Docker
 - [ ] **Logs Centralizados**: Expandir queries e dashboards do Loki
 - [ ] **APM (Application Performance Monitoring)**: Adicionar distributed tracing (Tempo/Jaeger)
 - [ ] **Blue/Green Deployment**: Implementar estratégia de deploy avançada
 - [ ] **Service Mesh**: Adicionar Istio ou AWS App Mesh
 - [ ] **GitOps**: Migrar para ArgoCD ou Flux
-- [ ] **Backup Automation**: Snapshots automatizados do RDS e volumes EBS
 - [ ] **Multi-Region**: Expandir para disaster recovery
-- [ ] **Cost Optimization**: Implementar AWS Cost Explorer automation
-- [ ] **Security Scanning**: Adicionar SAST/DAST no pipeline
+- [ ] **Cost Optimization**: Implementar AWS Cost Explorer automation e budget alerts
+- [ ] **Security Scanning - IaC**: Adicionar tfsec/checkov para Terraform, gitleaks para secrets
+- [ ] **Security Scanning - DAST**: Adicionar OWASP ZAP para testes dinâmicos
 - [ ] **Chaos Engineering**: Implementar testes de resiliência
 
 ---
