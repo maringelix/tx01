@@ -69,10 +69,7 @@ jobs:
             echo "Creating backup vault: $VAULT_NAME"
             aws backup create-backup-vault \
               --backup-vault-name $VAULT_NAME \
-              --backup-vault-tags \
-                Project=tx01 \
-                Environment=${{ github.event.inputs.environment }} \
-                ManagedBy=github-actions
+              --backup-vault-tags Project=tx01,Environment=${{ github.event.inputs.environment }},ManagedBy=github-actions
             echo "✅ Backup vault created: $VAULT_NAME"
           fi
 
@@ -91,11 +88,7 @@ jobs:
             aws backup create-backup-vault \
               --backup-vault-name $VAULT_NAME \
               --region ${{ env.BACKUP_REGION }} \
-              --backup-vault-tags \
-                Project=tx01 \
-                Environment=${{ github.event.inputs.environment }} \
-                ManagedBy=github-actions \
-                VaultType=replica
+              --backup-vault-tags Project=tx01,Environment=${{ github.event.inputs.environment }},ManagedBy=github-actions,VaultType=replica
             echo "✅ Cross-region backup vault created: $VAULT_NAME"
           fi
 
