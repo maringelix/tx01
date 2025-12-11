@@ -27,10 +27,10 @@ on:
         type: boolean
         default: false
       backup_schedule:
-        description: 'Backup schedule (cron UTC)'
+        description: 'Backup schedule (standard 5-field cron, UTC)'
         required: true
         type: string
-        default: '0 3 * * *'  # 3 AM UTC daily
+        default: '0 3 * * *'  # 3 AM UTC daily (converted to AWS Backup format)
 
 env:
   AWS_REGION: us-east-1
@@ -144,6 +144,13 @@ jobs:
           VAULT_NAME="tx01-backup-vault-${{ github.event.inputs.environment }}"
           ROLE_ARN="arn:aws:iam::${{ steps.account.outputs.account_id }}:role/tx01-backup-role-${{ github.event.inputs.environment }}"
           
+          # Convert standard cron to AWS Backup cron format
+          # AWS Backup requires 6 fields: minute hour day-of-month month day-of-week year
+          # Use ? for day-of-month when running daily (to avoid conflict with day-of-week)
+          SCHEDULE="${{ github.event.inputs.backup_schedule }}"
+          AWS_SCHEDULE=$(echo "$SCHEDULE" | awk '{print $1, $2, "?", $4, $5, "*"}')
+          echo "Schedule: cron($AWS_SCHEDULE)"
+          
           # Create backup plan JSON
           cat > /tmp/backup-plan.json <<EOF
           {
@@ -152,7 +159,7 @@ jobs:
               {
                 "RuleName": "DailyBackup",
                 "TargetBackupVaultName": "$VAULT_NAME",
-                "ScheduleExpression": "cron(${{ github.event.inputs.backup_schedule }})",
+                "ScheduleExpression": "cron($AWS_SCHEDULE)",
                 "StartWindowMinutes": 60,
                 "CompletionWindowMinutes": 120,
                 "Lifecycle": {
