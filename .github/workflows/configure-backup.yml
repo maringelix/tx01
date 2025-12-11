@@ -287,9 +287,9 @@ jobs:
 
       - name: Tag RDS instances for backup
         run: |
-          # Find RDS instances
+          # Find RDS instances (tx01-db-stg or tx01-rds-stg)
           RDS_INSTANCES=$(aws rds describe-db-instances \
-            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ github.event.inputs.environment }}')].DBInstanceArn" \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-') && contains(DBInstanceIdentifier, '-${{ github.event.inputs.environment }}')].DBInstanceArn" \
             --output text)
           
           if [ -n "$RDS_INSTANCES" ]; then
@@ -336,9 +336,9 @@ jobs:
 
       - name: Enable automated RDS snapshots
         run: |
-          # Find RDS instances
+          # Find RDS instances (tx01-db-stg or tx01-rds-stg)
           RDS_INSTANCES=$(aws rds describe-db-instances \
-            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
+            --query "DBInstances[?contains(DBInstanceIdentifier, 'tx01-') && contains(DBInstanceIdentifier, '-${{ github.event.inputs.environment }}')].DBInstanceIdentifier" \
             --output text)
           
           if [ -n "$RDS_INSTANCES" ]; then
