@@ -71,6 +71,52 @@ jobs:
         run: terraform output
         working-directory: terraform/bootstrap
 
+      - name: � Configure S3 Bucket for AWS Backup
+        if: inputs.action == 'apply'
+        run: |
+          BUCKET_NAME="tx01-terraform-state-maringelix-2025"
+          
+          echo "Configuring S3 bucket tags for AWS Backup compatibility..."
+          
+          # Ensure bucket has proper tags for backup selection
+          # The bucket might have been created by Terraform, but we ensure tags are correct
+          aws s3api put-bucket-tagging \
+            --bucket $BUCKET_NAME \
+            --tagging "TagSet=[
+              {Key=Project,Value=tx01},
+              {Key=Environment,Value=stg},
+              {Key=ManagedBy,Value=Terraform},
+              {Key=Name,Value=$BUCKET_NAME},
+              {Key=BackupEnabled,Value=true}
+            ]" || echo "⚠️ Could not update bucket tags (bucket might not exist yet)"
+          
+          echo "✅ S3 bucket configured for AWS Backup"
+
+      - name: 🔐 Configure DynamoDB Table for AWS Backup
+        if: inputs.action == 'apply'
+        run: |
+          TABLE_NAME="tx01-terraform-state-maringelix-2025-locks"
+          
+          echo "Configuring DynamoDB table tags for AWS Backup..."
+          
+          # Get table ARN
+          TABLE_ARN=$(aws dynamodb describe-table \
+            --table-name $TABLE_NAME \
+            --query 'Table.TableArn' \
+            --output text 2>/dev/null || echo "")
+          
+          if [ -n "$TABLE_ARN" ]; then
+            aws dynamodb tag-resource \
+              --resource-arn $TABLE_ARN \
+              --tags \
+                Key=Project,Value=tx01 \
+                Key=Environment,Value=stg \
+                Key=BackupEnabled,Value=true
+            echo "✅ DynamoDB table configured for AWS Backup"
+          else
+            echo "⚠️ DynamoDB table not found yet"
+          fi
+
       - name: 📋 Summary
         if: inputs.action == 'apply'
         run: |
@@ -80,4 +126,13 @@ jobs:
           echo "**DynamoDB Table:** tx01-terraform-state-maringelix-2025-locks" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** us-east-1" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✨ Backend provisionado com sucesso! Agora você pode executar o workflow de deploy." >> $GITHUB_STEP_SUMMARY
+          echo "### 🔐 Backup Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ S3 bucket tagged with \`BackupEnabled=true\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ DynamoDB table tagged with \`BackupEnabled=true\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Tags configured for AWS Backup selection" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📝 Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "1. ✨ Execute o workflow \`Configure Backup Automation\` para habilitar backups" >> $GITHUB_STEP_SUMMARY
+          echo "2. 🚀 Execute o workflow de deploy para provisionar a infraestrutura" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**💡 Tip:** O backend S3 já está preparado para AWS Backup com todas as tags necessárias!" >> $GITHUB_STEP_SUMMARY

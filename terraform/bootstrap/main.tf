@@ -18,7 +18,10 @@ resource "aws_s3_bucket" "tf_state" {
 
   force_destroy = var.force_destroy
 
-  tags = merge(var.tags, { Name = "${var.bucket_name}" })
+  tags = merge(var.tags, {
+    Name          = var.bucket_name
+    BackupEnabled = "true"
+  })
 }
 
 # Block public access
@@ -61,7 +64,10 @@ resource "aws_dynamodb_table" "tf_locks" {
     type = "S"
   }
 
-  tags = merge(var.tags, { Name = "${var.bucket_name}-locks" })
+  tags = merge(var.tags, {
+    Name          = "${var.bucket_name}-locks"
+    BackupEnabled = "true"
+  })
 }
 
 # Outputs
