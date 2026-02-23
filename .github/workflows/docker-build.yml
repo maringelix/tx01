@@ -1,19 +1,6 @@
 name: 🐳 Build and Push Docker Image to ECR
 
 on:
-  push:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'docker/**'
-      - '.github/workflows/docker-build.yml'
-  pull_request:
-    branches:
-      - main
-      - develop
-    paths:
-      - 'docker/**'
   workflow_dispatch:
 
 env:

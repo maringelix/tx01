@@ -129,3 +129,9 @@ variable "iam_user_name" {
   type        = string
   default     = ""
 }
+
+variable "ssh_allowed_cidr" {
+  description = "CIDR block allowed for SSH access (restrict to your IP)"
+  type        = string
+  default     = "10.0.0.0/8"
+}

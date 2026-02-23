@@ -59,8 +59,8 @@ resource "aws_security_group" "ec2" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Allow SSH (considere usar Systems Manager Session Manager)"
+    cidr_blocks = [var.ssh_allowed_cidr]
+    description = "Allow SSH from authorized CIDR only"
   }
 
   egress {

@@ -30,7 +30,7 @@ provider "aws" {
       {
         Environment = var.environment
         Project     = var.project_name
-        CreatedAt   = timestamp()
+        ManagedBy   = "terraform"
       }
     )
   }
