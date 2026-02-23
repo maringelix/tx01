@@ -17,7 +17,7 @@ resource "aws_ecr_repository" "main" {
   }
 }
 
-# ECR Lifecycle Policy (manter apenas últimas 10 imagens)
+# ECR Lifecycle Policy (keep only last 10 images)
 resource "aws_ecr_lifecycle_policy" "main" {
   repository = aws_ecr_repository.main.name
   policy     = jsonencode({

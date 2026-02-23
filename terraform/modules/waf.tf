@@ -1,4 +1,4 @@
-# WAF IP Set (whitelist de IPs se necessário)
+# WAF IP Set (IP allowlist if needed)
 resource "aws_wafv2_ip_set" "whitelist" {
   count = var.enable_waf ? 1 : 0
   
@@ -142,7 +142,7 @@ resource "aws_wafv2_web_acl_association" "main" {
   web_acl_arn  = aws_wafv2_web_acl.main[0].arn
 }
 
-# CloudWatch Log Group para WAF
+# CloudWatch Log Group for WAF
 resource "aws_cloudwatch_log_group" "waf_logs" {
   count = var.enable_waf ? 1 : 0
   

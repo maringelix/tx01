@@ -1,14 +1,2 @@
-# Code Owners - Automático assignment de reviews
-
-# Terraform
-terraform/  @maringelix
-terraform/modules/  @maringelix
-
-# Docker
-docker/  @maringelix
-
-# Workflows
-.github/workflows/  @maringelix
-
-# Documentation
-*.md  @maringelix
+# Default owner for all files
+* @maringelix

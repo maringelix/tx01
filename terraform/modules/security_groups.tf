@@ -1,4 +1,4 @@
-# Security Group para ALB
+# Security Group for ALB
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg-${var.environment}"
   description = "Security group for ALB"
@@ -33,7 +33,7 @@ resource "aws_security_group" "alb" {
   }
 }
 
-# Security Group para EC2
+# Security Group for EC2
 resource "aws_security_group" "ec2" {
   name        = "${var.project_name}-ec2-sg-${var.environment}"
   description = "Security group for EC2 instances"

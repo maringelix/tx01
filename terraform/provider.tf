@@ -11,7 +11,7 @@ terraform {
     }
   }
 
-  # Descomente e configure para usar S3 backend
+  # Uncomment and configure to use S3 backend
   # backend "s3" {
   #   bucket         = "seu-bucket-terraform-state"
   #   key            = "tx01/terraform.tfstate"

@@ -122,7 +122,7 @@ resource "aws_eks_node_group" "main" {
   }
 
   instance_types = [var.eks_node_instance_type]
-  capacity_type  = "ON_DEMAND" # ou "SPOT" para economizar
+  capacity_type  = "ON_DEMAND" # or "SPOT" to save costs
   disk_size      = 20
 
   update_config {
@@ -472,7 +472,7 @@ output "eks_node_group_id" {
   value       = var.enable_eks ? aws_eks_node_group.main[0].id : null
 }
 
-# Kubernetes ConfigMap para aws-auth (manage existing ConfigMap created by EKS)
+# Kubernetes ConfigMap for aws-auth (manage existing ConfigMap created by EKS)
 resource "kubernetes_config_map_v1_data" "aws_auth" {
   count = var.enable_eks && var.iam_user_arn != "" ? 1 : 0
 
@@ -506,7 +506,7 @@ resource "kubernetes_config_map_v1_data" "aws_auth" {
   ]
 }
 
-# ClusterRoleBinding para console AWS (permite visualizar nodes e recursos no console)
+# ClusterRoleBinding for AWS Console (allows viewing nodes and resources)
 resource "kubernetes_cluster_role_binding_v1" "console_admin" {
   count = var.enable_eks && var.iam_user_name != "" ? 1 : 0
 

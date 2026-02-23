@@ -47,7 +47,7 @@ resource "aws_subnet" "private" {
   }
 }
 
-# Elastic IP para NAT Gateway
+# Elastic IP for NAT Gateway
 resource "aws_eip" "nat" {
   count  = 2
   domain = "vpc"
@@ -72,7 +72,7 @@ resource "aws_nat_gateway" "main" {
   depends_on = [aws_internet_gateway.main]
 }
 
-# Route Table para Public Subnets
+# Route Table for Public Subnets
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -86,14 +86,14 @@ resource "aws_route_table" "public" {
   }
 }
 
-# Associar Public Subnets com Route Table Público
+# Associate Public Subnets with Public Route Table
 resource "aws_route_table_association" "public" {
   count          = 2
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
-# Route Tables para Private Subnets (um por AZ)
+# Route Tables for Private Subnets (one per AZ)
 resource "aws_route_table" "private" {
   count  = 2
   vpc_id = aws_vpc.main.id
@@ -115,7 +115,7 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private[count.index].id
 }
 
-# Data source para obter AZs disponíveis
+# Data source to get available AZs
 data "aws_availability_zones" "available" {
   state = "available"
 }

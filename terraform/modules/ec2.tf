@@ -1,4 +1,4 @@
-# Data source para a AMI mais recente do Ubuntu
+# Data source for latest Ubuntu AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical
@@ -14,7 +14,7 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# User data script para instalar Docker e puxar imagem
+# User data script to install Docker and pull image
 locals {
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
     ecr_registry  = split("/", aws_ecr_repository.main.repository_url)[0]
@@ -25,7 +25,7 @@ locals {
   }))
 }
 
-# IAM Role para EC2
+# IAM Role for EC2
 resource "aws_iam_role" "ec2_role" {
   name = "${var.project_name}-ec2-role-${var.environment}"
 
@@ -47,7 +47,7 @@ resource "aws_iam_role" "ec2_role" {
   }
 }
 
-# IAM Policy para acesso ao ECR
+# IAM Policy for ECR access
 resource "aws_iam_role_policy" "ecr_access" {
   name   = "${var.project_name}-ecr-access-${var.environment}"
   role   = aws_iam_role.ec2_role.id
@@ -78,7 +78,7 @@ resource "aws_iam_role_policy" "ecr_access" {
   })
 }
 
-# IAM Policy para acesso ao Secrets Manager (credenciais do DB)
+# IAM Policy for Secrets Manager access (DB credentials)
 resource "aws_iam_role_policy" "secrets_access" {
   name   = "${var.project_name}-secrets-access-${var.environment}"
   role   = aws_iam_role.ec2_role.id
@@ -97,7 +97,7 @@ resource "aws_iam_role_policy" "secrets_access" {
   })
 }
 
-# IAM Policy para SSM (Systems Manager)
+# IAM Policy for SSM (Systems Manager)
 resource "aws_iam_role_policy" "ssm_access" {
   name   = "${var.project_name}-ssm-access-${var.environment}"
   role   = aws_iam_role.ec2_role.id
@@ -175,7 +175,7 @@ resource "aws_instance" "web" {
   depends_on = [aws_nat_gateway.main]
 }
 
-# CloudWatch Log Group para EC2
+# CloudWatch Log Group for EC2
 resource "aws_cloudwatch_log_group" "ec2" {
   name              = "/aws/ec2/${var.project_name}-${var.environment}"
   retention_in_days = var.environment == "prd" ? 30 : 7

@@ -10,7 +10,7 @@ on:
         options:
           - shutdown  # Desliga EKS + RDS
           - startup   # Liga EKS + RDS
-          - status    # Verifica status
+          - status    # Check status
       environment:
         description: 'Environment'
         required: true
@@ -31,7 +31,7 @@ jobs:
     
     steps:
       - name: 🔑 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -101,17 +101,17 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: 🔑 Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c # v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform_version: 1.6.0
 
@@ -207,21 +207,21 @@ jobs:
           echo "| **EBS Volumes** | \$4.40 | \$0.00 |" >> $GITHUB_STEP_SUMMARY
           echo "| **S3 + ECR** | \$0.30 | \$0.30 |" >> $GITHUB_STEP_SUMMARY
           echo "| **━━━━━━━━━━━━** | **━━━━━━━━** | **━━━━━━━━** |" >> $GITHUB_STEP_SUMMARY
-          echo "| **TOTAL** | **\$218.27/mês** | **\$68.30/mês** |" >> $GITHUB_STEP_SUMMARY
+          echo "| **TOTAL** | **\$218.27/mo** | **\$68.30/mo** |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
           if [ "${{ inputs.action }}" == "shutdown" ]; then
-            echo "✅ **Savings:** ~\$150/mês with EKS + RDS stopped" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Savings:** ~\$150/mo with EKS + RDS stopped" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⏰ **Your \$92 credit will last:** ~40 days" >> $GITHUB_STEP_SUMMARY
           elif [ "${{ inputs.action }}" == "startup" ]; then
-            echo "⚠️ **Monthly cost:** ~\$218/mês with everything running" >> $GITHUB_STEP_SUMMARY
+            echo "⚠️ **Monthly cost:** ~\$218/mo with everything running" >> $GITHUB_STEP_SUMMARY
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "⏰ **Your \$92 credit will last:** ~12 days" >> $GITHUB_STEP_SUMMARY
           fi
           
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "⚠️ **Note:** NAT Gateways cannot be stopped and cost \$65.70/mês" >> $GITHUB_STEP_SUMMARY
+          echo "⚠️ **Note:** NAT Gateways cannot be stopped and cost \$65.70/mo" >> $GITHUB_STEP_SUMMARY
 
       - name: 🔗 Application URL
         if: inputs.action == 'startup' || (inputs.action == 'status' && steps.check-eks.outputs.eks_exists == 'true')
