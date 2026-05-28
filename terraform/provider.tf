@@ -1,9 +1,9 @@
 terraform {
-  required_version = ">= 1.0"
+  required_version = ">= 1.6.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 5.100"
     }
     random = {
       source  = "hashicorp/random"
@@ -11,14 +11,10 @@ terraform {
     }
   }
 
-  # Uncomment and configure to use S3 backend
-  # backend "s3" {
-  #   bucket         = "seu-bucket-terraform-state"
-  #   key            = "tx01/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "terraform-locks"
-  # }
+  # Remote backend: pass via 'terraform init -backend-config=backend.hcl'.
+  # An example 'backend.hcl' template is intentionally NOT committed so each
+  # environment supplies its own bucket / state key / lock table out-of-band.
+  backend "s3" {}
 }
 
 provider "aws" {
