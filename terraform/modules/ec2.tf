@@ -49,8 +49,8 @@ resource "aws_iam_role" "ec2_role" {
 
 # IAM Policy for ECR access
 resource "aws_iam_role_policy" "ecr_access" {
-  name   = "${var.project_name}-ecr-access-${var.environment}"
-  role   = aws_iam_role.ec2_role.id
+  name = "${var.project_name}-ecr-access-${var.environment}"
+  role = aws_iam_role.ec2_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -80,8 +80,8 @@ resource "aws_iam_role_policy" "ecr_access" {
 
 # IAM Policy for Secrets Manager access (DB credentials)
 resource "aws_iam_role_policy" "secrets_access" {
-  name   = "${var.project_name}-secrets-access-${var.environment}"
-  role   = aws_iam_role.ec2_role.id
+  name = "${var.project_name}-secrets-access-${var.environment}"
+  role = aws_iam_role.ec2_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -99,8 +99,8 @@ resource "aws_iam_role_policy" "secrets_access" {
 
 # IAM Policy for SSM (Systems Manager)
 resource "aws_iam_role_policy" "ssm_access" {
-  name   = "${var.project_name}-ssm-access-${var.environment}"
-  role   = aws_iam_role.ec2_role.id
+  name = "${var.project_name}-ssm-access-${var.environment}"
+  role = aws_iam_role.ec2_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -137,12 +137,12 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 resource "aws_key_pair" "deploy_key" {
   key_name   = "tx01-deploy-key"
   public_key = var.ssh_public_key != "" ? var.ssh_public_key : file("${path.module}/../../ssh_keys/tx01-deploy-key.pub")
-  
+
   tags = {
     Name        = "${var.project_name}-deploy-key-${var.environment}"
     Environment = var.environment
   }
-  
+
   lifecycle {
     ignore_changes = [public_key]
   }
@@ -150,15 +150,15 @@ resource "aws_key_pair" "deploy_key" {
 
 # EC2 Instances
 resource "aws_instance" "web" {
-  count                    = var.instance_count
-  ami                      = data.aws_ami.ubuntu.id
-  instance_type            = var.instance_type
-  subnet_id                = aws_subnet.public[count.index % 2].id
-  vpc_security_group_ids   = [aws_security_group.ec2.id]
-  iam_instance_profile     = aws_iam_instance_profile.ec2_profile.name
-  user_data                = local.user_data
+  count                       = var.instance_count
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  subnet_id                   = aws_subnet.public[count.index % 2].id
+  vpc_security_group_ids      = [aws_security_group.ec2.id]
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
+  user_data                   = local.user_data
   associate_public_ip_address = true
-  key_name                 = aws_key_pair.deploy_key.key_name
+  key_name                    = aws_key_pair.deploy_key.key_name
 
   monitoring = true
 
