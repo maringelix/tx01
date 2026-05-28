@@ -91,6 +91,16 @@ resource "aws_launch_template" "eks_nodes" {
     delete_on_termination       = true
   }
 
+  # IMDSv2 enforcement: refuse legacy IMDSv1 token-less requests and limit the
+  # response hop limit so that container workloads cannot accidentally reach the
+  # instance metadata service (a common SSRF pivot for pod compromise).
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+    instance_metadata_tags      = "disabled"
+  }
+
   tag_specifications {
     resource_type = "instance"
     tags = merge(
@@ -114,6 +124,13 @@ resource "aws_eks_node_group" "main" {
   node_group_name = "${var.project_name}-ng-${var.environment}-${replace(var.eks_node_instance_type, ".", "-")}"
   node_role_arn   = aws_iam_role.eks_node[0].arn
   subnet_ids      = aws_subnet.private[*].id
+
+  # Use the custom launch template so worker nodes inherit IMDSv2 enforcement
+  # and the dedicated security group defined above.
+  launch_template {
+    id      = aws_launch_template.eks_nodes[0].id
+    version = aws_launch_template.eks_nodes[0].latest_version
+  }
 
   scaling_config {
     desired_size = var.eks_node_desired_size
