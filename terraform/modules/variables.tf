@@ -131,7 +131,12 @@ variable "iam_user_name" {
 }
 
 variable "ssh_allowed_cidr" {
-  description = "CIDR block allowed for SSH access (restrict to your IP)"
+  description = "CIDR block allowed for SSH access (restrict to your IP). Use 0.0.0.0/0 only for ephemeral test scenarios."
   type        = string
   default     = "10.0.0.0/8"
+
+  validation {
+    condition     = can(cidrhost(var.ssh_allowed_cidr, 0))
+    error_message = "ssh_allowed_cidr must be a valid IPv4 CIDR block (e.g. 203.0.113.10/32 or 10.0.0.0/8)."
+  }
 }
