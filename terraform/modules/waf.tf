@@ -1,7 +1,7 @@
 # WAF IP Set (IP allowlist if needed)
 resource "aws_wafv2_ip_set" "whitelist" {
   count = var.enable_waf ? 1 : 0
-  
+
   name               = "${var.project_name}-whitelist-${var.environment}"
   description        = "IP whitelist for ${var.environment}"
   scope              = "REGIONAL"
@@ -16,7 +16,7 @@ resource "aws_wafv2_ip_set" "whitelist" {
 # WAF Web ACL
 resource "aws_wafv2_web_acl" "main" {
   count = var.enable_waf ? 1 : 0
-  
+
   name  = "${var.project_name}-waf-${var.environment}"
   scope = "REGIONAL"
 
@@ -137,7 +137,7 @@ resource "aws_wafv2_web_acl" "main" {
 # Associate WAF with ALB
 resource "aws_wafv2_web_acl_association" "main" {
   count = var.enable_waf ? 1 : 0
-  
+
   resource_arn = aws_lb.main.arn
   web_acl_arn  = aws_wafv2_web_acl.main[0].arn
 }
@@ -145,7 +145,7 @@ resource "aws_wafv2_web_acl_association" "main" {
 # CloudWatch Log Group for WAF
 resource "aws_cloudwatch_log_group" "waf_logs" {
   count = var.enable_waf ? 1 : 0
-  
+
   name              = "/aws/waf/${var.project_name}-${var.environment}"
   retention_in_days = var.environment == "prd" ? 90 : 30
 

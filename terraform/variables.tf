@@ -57,8 +57,8 @@ variable "tags" {
   description = "Common tags"
   type        = map(string)
   default = {
-    Terraform   = "true"
-    Owner       = "DevOps"
-    ManagedBy   = "Terraform"
+    Terraform = "true"
+    Owner     = "DevOps"
+    ManagedBy = "Terraform"
   }
 }

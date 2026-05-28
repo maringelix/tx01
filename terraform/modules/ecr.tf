@@ -20,7 +20,7 @@ resource "aws_ecr_repository" "main" {
 # ECR Lifecycle Policy (keep only last 10 images)
 resource "aws_ecr_lifecycle_policy" "main" {
   repository = aws_ecr_repository.main.name
-  policy     = jsonencode({
+  policy = jsonencode({
     rules = [
       {
         rulePriority = 1
@@ -39,10 +39,10 @@ resource "aws_ecr_lifecycle_policy" "main" {
         rulePriority = 2
         description  = "Remove untagged images older than 7 days"
         selection = {
-          tagStatus           = "untagged"
-          countType           = "sinceImagePushed"
-          countUnit           = "days"
-          countNumber         = 7
+          tagStatus   = "untagged"
+          countType   = "sinceImagePushed"
+          countUnit   = "days"
+          countNumber = 7
         }
         action = {
           type = "expire"

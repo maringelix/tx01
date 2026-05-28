@@ -1,7 +1,7 @@
 # EKS Cluster
 resource "aws_eks_cluster" "main" {
   count = var.enable_eks ? 1 : 0
-  
+
   name     = "${var.project_name}-eks-${var.environment}"
   role_arn = aws_iam_role.eks_cluster[0].arn
   version  = "1.32"
@@ -31,7 +31,7 @@ resource "aws_eks_cluster" "main" {
 # Security Group for EKS Node Group
 resource "aws_security_group" "eks_nodes" {
   count = var.enable_eks ? 1 : 0
-  
+
   name        = "${var.project_name}-eks-nodes-sg-${var.environment}"
   description = "Security group for EKS worker nodes"
   vpc_id      = aws_vpc.main.id
@@ -55,7 +55,7 @@ resource "aws_security_group" "eks_nodes" {
 # Allow communication between nodes
 resource "aws_security_group_rule" "eks_nodes_ingress_self" {
   count = var.enable_eks ? 1 : 0
-  
+
   type              = "ingress"
   from_port         = 0
   to_port           = 65535
@@ -68,7 +68,7 @@ resource "aws_security_group_rule" "eks_nodes_ingress_self" {
 # Allow cluster control plane to communicate with nodes
 resource "aws_security_group_rule" "eks_nodes_ingress_cluster" {
   count = var.enable_eks ? 1 : 0
-  
+
   type                     = "ingress"
   from_port                = 1025
   to_port                  = 65535
@@ -81,7 +81,7 @@ resource "aws_security_group_rule" "eks_nodes_ingress_cluster" {
 # Launch Template for EKS Node Group
 resource "aws_launch_template" "eks_nodes" {
   count = var.enable_eks ? 1 : 0
-  
+
   name_prefix = "${var.project_name}-eks-node-${var.environment}-"
   description = "Launch template for EKS worker nodes"
 
@@ -119,7 +119,7 @@ resource "aws_launch_template" "eks_nodes" {
 # EKS Node Group
 resource "aws_eks_node_group" "main" {
   count = var.enable_eks ? 1 : 0
-  
+
   cluster_name    = aws_eks_cluster.main[0].name
   node_group_name = "${var.project_name}-ng-${var.environment}-${replace(var.eks_node_instance_type, ".", "-")}"
   node_role_arn   = aws_iam_role.eks_node[0].arn
@@ -175,10 +175,10 @@ resource "aws_eks_node_group" "main" {
 # EKS Add-ons
 resource "aws_eks_addon" "vpc_cni" {
   count = var.enable_eks ? 1 : 0
-  
-  cluster_name             = aws_eks_cluster.main[0].name
-  addon_name               = "vpc-cni"
-  addon_version            = "v1.19.0-eksbuild.1"  # Compatible with K8s 1.32
+
+  cluster_name                = aws_eks_cluster.main[0].name
+  addon_name                  = "vpc-cni"
+  addon_version               = "v1.19.0-eksbuild.1" # Compatible with K8s 1.32
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
@@ -191,10 +191,10 @@ resource "aws_eks_addon" "vpc_cni" {
 
 resource "aws_eks_addon" "kube_proxy" {
   count = var.enable_eks ? 1 : 0
-  
-  cluster_name             = aws_eks_cluster.main[0].name
-  addon_name               = "kube-proxy"
-  addon_version            = "v1.32.0-eksbuild.2"  # Match K8s version
+
+  cluster_name                = aws_eks_cluster.main[0].name
+  addon_name                  = "kube-proxy"
+  addon_version               = "v1.32.0-eksbuild.2" # Match K8s version
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
@@ -207,10 +207,10 @@ resource "aws_eks_addon" "kube_proxy" {
 
 resource "aws_eks_addon" "coredns" {
   count = var.enable_eks ? 1 : 0
-  
-  cluster_name             = aws_eks_cluster.main[0].name
-  addon_name               = "coredns"
-  addon_version            = "v1.11.3-eksbuild.2"  # Compatible with K8s 1.32
+
+  cluster_name                = aws_eks_cluster.main[0].name
+  addon_name                  = "coredns"
+  addon_version               = "v1.11.3-eksbuild.2" # Compatible with K8s 1.32
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
@@ -224,11 +224,11 @@ resource "aws_eks_addon" "coredns" {
 # EBS CSI Driver Add-on
 resource "aws_eks_addon" "ebs_csi_driver" {
   count = var.enable_eks ? 1 : 0
-  
-  cluster_name             = aws_eks_cluster.main[0].name
-  addon_name               = "aws-ebs-csi-driver"
-  addon_version            = "v1.53.0-eksbuild.1"
-  service_account_role_arn = aws_iam_role.ebs_csi_driver[0].arn
+
+  cluster_name                = aws_eks_cluster.main[0].name
+  addon_name                  = "aws-ebs-csi-driver"
+  addon_version               = "v1.53.0-eksbuild.1"
+  service_account_role_arn    = aws_iam_role.ebs_csi_driver[0].arn
   resolve_conflicts_on_create = "OVERWRITE"
   resolve_conflicts_on_update = "PRESERVE"
 
@@ -243,7 +243,7 @@ resource "aws_eks_addon" "ebs_csi_driver" {
 # IAM Role for EBS CSI Driver
 resource "aws_iam_role" "ebs_csi_driver" {
   count = var.enable_eks ? 1 : 0
-  
+
   name = "${var.project_name}-eks-ebs-csi-driver"
 
   assume_role_policy = jsonencode({
@@ -270,7 +270,7 @@ resource "aws_iam_role" "ebs_csi_driver" {
 
 resource "aws_iam_role_policy_attachment" "ebs_csi_driver_policy" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
   role       = aws_iam_role.ebs_csi_driver[0].name
 }
@@ -280,9 +280,9 @@ resource "aws_iam_role_policy_attachment" "ebs_csi_driver_policy" {
 # https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_providers_create_oidc_verify-thumbprint.html
 resource "aws_iam_openid_connect_provider" "eks" {
   count = var.enable_eks ? 1 : 0
-  
+
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]  # Root CA thumbprint for EKS OIDC
+  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"] # Root CA thumbprint for EKS OIDC
   url             = aws_eks_cluster.main[0].identity[0].oidc[0].issuer
 
   tags = merge(
@@ -296,7 +296,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
 # IAM Role for EKS Cluster
 resource "aws_iam_role" "eks_cluster" {
   count = var.enable_eks ? 1 : 0
-  
+
   name = "${var.project_name}-eks-cluster-role-${var.environment}"
 
   assume_role_policy = jsonencode({
@@ -317,7 +317,7 @@ resource "aws_iam_role" "eks_cluster" {
 
 resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
   role       = aws_iam_role.eks_cluster[0].name
 }
@@ -325,7 +325,7 @@ resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
 # IAM Role for EKS Node Group
 resource "aws_iam_role" "eks_node" {
   count = var.enable_eks ? 1 : 0
-  
+
   name = "${var.project_name}-eks-node-role-${var.environment}"
 
   assume_role_policy = jsonencode({
@@ -346,21 +346,21 @@ resource "aws_iam_role" "eks_node" {
 
 resource "aws_iam_role_policy_attachment" "eks_node_policy" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
   role       = aws_iam_role.eks_node[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "eks_cni_policy" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   role       = aws_iam_role.eks_node[0].name
 }
 
 resource "aws_iam_role_policy_attachment" "eks_container_registry_policy" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
   role       = aws_iam_role.eks_node[0].name
 }
@@ -368,7 +368,7 @@ resource "aws_iam_role_policy_attachment" "eks_container_registry_policy" {
 # Security Group for EKS Cluster
 resource "aws_security_group" "eks_cluster" {
   count = var.enable_eks ? 1 : 0
-  
+
   name        = "${var.project_name}-eks-cluster-sg-${var.environment}"
   description = "Security group for EKS cluster"
   vpc_id      = aws_vpc.main.id
@@ -392,7 +392,7 @@ resource "aws_security_group" "eks_cluster" {
 # Allow ALB to communicate with EKS Pods
 resource "aws_security_group_rule" "eks_cluster_alb_ingress" {
   count = var.enable_eks ? 1 : 0
-  
+
   type                     = "ingress"
   from_port                = 443
   to_port                  = 443
@@ -405,7 +405,7 @@ resource "aws_security_group_rule" "eks_cluster_alb_ingress" {
 # CloudWatch Log Group for EKS
 resource "aws_cloudwatch_log_group" "eks_cluster" {
   count = var.enable_eks ? 1 : 0
-  
+
   name              = "/aws/eks/${var.project_name}-eks-${var.environment}/cluster"
   retention_in_days = 7
 
@@ -415,7 +415,7 @@ resource "aws_cloudwatch_log_group" "eks_cluster" {
 # IAM Role for AWS Load Balancer Controller
 resource "aws_iam_role" "aws_load_balancer_controller" {
   count = var.enable_eks ? 1 : 0
-  
+
   name = "${var.project_name}-alb-controller-${var.environment}"
 
   assume_role_policy = jsonencode({
@@ -442,7 +442,7 @@ resource "aws_iam_role" "aws_load_balancer_controller" {
 
 resource "aws_iam_policy" "aws_load_balancer_controller" {
   count = var.enable_eks ? 1 : 0
-  
+
   name        = "${var.project_name}-alb-controller-policy-${var.environment}"
   description = "Policy for AWS Load Balancer Controller"
 
@@ -453,7 +453,7 @@ resource "aws_iam_policy" "aws_load_balancer_controller" {
 
 resource "aws_iam_role_policy_attachment" "aws_load_balancer_controller" {
   count = var.enable_eks ? 1 : 0
-  
+
   policy_arn = aws_iam_policy.aws_load_balancer_controller[0].arn
   role       = aws_iam_role.aws_load_balancer_controller[0].name
 }

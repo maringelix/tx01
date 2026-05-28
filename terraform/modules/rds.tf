@@ -96,8 +96,8 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
 
 # RDS PostgreSQL Instance
 resource "aws_db_instance" "main" {
-  identifier     = "${var.project_name}-db-${var.environment}"
-  engine         = "postgres" # Let AWS choose latest supported minor (omit engine_version)
+  identifier = "${var.project_name}-db-${var.environment}"
+  engine     = "postgres" # Let AWS choose latest supported minor (omit engine_version)
 
   # Free Tier: t4g.micro (ARM-based, better performance than t3.micro)
   instance_class = var.environment == "prd" ? "db.t4g.micro" : "db.t4g.micro"
@@ -117,18 +117,18 @@ resource "aws_db_instance" "main" {
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   publicly_accessible    = false # IMPORTANT: Keep in private subnet
-  multi_az               = false  # Multi-AZ not in free tier
+  multi_az               = false # Multi-AZ not in free tier
 
   # Backup configuration
-  backup_retention_period = var.environment == "prd" ? 7 : 1
-  backup_window           = "03:00-04:00"
-  maintenance_window      = "mon:04:00-mon:05:00"
-  skip_final_snapshot     = var.environment == "stg" ? true : false
+  backup_retention_period   = var.environment == "prd" ? 7 : 1
+  backup_window             = "03:00-04:00"
+  maintenance_window        = "mon:04:00-mon:05:00"
+  skip_final_snapshot       = var.environment == "stg" ? true : false
   final_snapshot_identifier = var.environment == "prd" ? "${var.project_name}-db-final-snapshot-${var.environment}" : null
 
   # Enhanced monitoring (optional, not free tier)
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
-  
+
   # Performance Insights (not in free tier, disable for staging)
   performance_insights_enabled = false
 
