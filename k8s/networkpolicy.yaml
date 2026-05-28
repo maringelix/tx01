@@ -1,0 +1,71 @@
+# Default-deny + minimal allow-list for the tx01 app namespace.
+#
+# - All traffic to/from tx01 pods is blocked unless an explicit rule allows it.
+# - Ingress: from any pod in the kube-system namespace labelled as the
+#   AWS Load Balancer Controller target (the ALB target group binding controller
+#   does not require a NetworkPolicy because the ALB is external, but pods that
+#   sit behind a ClusterIP/NodePort -- e.g. another ingress controller -- need
+#   the explicit rule). We also allow same-namespace traffic.
+# - Egress: DNS (kube-dns) + the RDS endpoint (assumed to be reachable via the
+#   VPC CIDR 10.0.0.0/16 -- adjust to your VPC range).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tx01-default-deny
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: tx01
+  policyTypes: ["Ingress", "Egress"]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tx01-allow-http
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: tx01
+  policyTypes: ["Ingress"]
+  ingress:
+    # Allow ingress from anywhere on the cluster network on container port 8080.
+    # The ALB terminates externally and forwards to the target pods directly;
+    # this rule covers both ALB target-group-binding (target-type: ip) and
+    # NodePort traffic.
+    - ports:
+        - protocol: TCP
+          port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tx01-allow-egress
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      app: tx01
+  policyTypes: ["Egress"]
+  egress:
+    # DNS (kube-dns) -- required so Pods can resolve external hostnames.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # RDS database -- reachable inside the VPC CIDR. Adjust the CIDR to your VPC.
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - protocol: TCP
+          port: 5432
